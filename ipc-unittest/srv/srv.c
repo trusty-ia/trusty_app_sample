@@ -27,7 +27,9 @@
 #define MAX_PORT_PATH_LEN   64  /* max length of port path name   */
 
 #define LOG_TAG "ipc-unittest-srv"
-#define TLOGI(fmt, ...) printf("%s: " fmt, LOG_TAG, ## __VA_ARGS__)
+
+#define TLOGI(fmt, ...) \
+    fprintf(stderr, "%s: " fmt, LOG_TAG, ## __VA_ARGS__)
 
 typedef void (*event_handler_proc_t) (const uevent_t *ev);
 

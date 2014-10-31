@@ -29,9 +29,10 @@
 #define MAX_PORT_BUF_NUM    32    /* max number of per port buffers */
 #define MAX_PORT_BUF_SIZE  512    /* max size of per port buffer    */
 
-
 #define LOG_TAG "ipc-unittest-main"
-#define TLOGI(fmt, ...) printf("%s: " fmt, LOG_TAG, ## __VA_ARGS__)
+
+#define TLOGI(fmt, ...) \
+    fprintf(stderr, "%s: " fmt, LOG_TAG, ## __VA_ARGS__)
 
 #define MSEC 1000000UL
 #define SRV_PATH_BASE   "com.android.ipc-unittest"
@@ -66,8 +67,8 @@ static uint _tests_failed = 0; /* Number of conditions failed  */
 	typeof(actual) _a = actual;                             \
 	_tests_total++;                                         \
 	if (_e != _a) {                                         \
-		TRACEF("%s: expected " #expected " (%d), "      \
-		    "actual " #actual " (%d)\n",                \
+		TLOGI("%s: expected " #expected " (%d), "      \
+		    "actual " #actual " (%d)\n",               \
 		    msg, (int)_e, (int)_a);                     \
 		_tests_failed++;                                \
 		_all_ok = false;                                \
@@ -80,7 +81,7 @@ static uint _tests_failed = 0; /* Number of conditions failed  */
 	typeof(actual) _a = actual;                             \
 	_tests_total++;                                         \
 	if (_e <= _a) {                                         \
-		TRACEF("%s: expected " #expected " (%d), "      \
+		TLOGI("%s: expected " #expected " (%d), "      \
 		    "actual " #actual " (%d)\n",                \
 		    msg, (int)_e, (int)_a);                     \
 		_tests_failed++;                                \
@@ -93,7 +94,7 @@ static uint _tests_failed = 0; /* Number of conditions failed  */
 	typeof(actual) _a = actual;                             \
 	_tests_total++;                                         \
 	if (_a < 0) {                                           \
-		TRACEF("%s: expected >= 0 "                     \
+		TLOGI("%s: expected >= 0 "                     \
 		    "actual " #actual " (%d)\n", msg, (int)_a); \
 		_tests_failed++;                                \
 		_all_ok = false;                                \
@@ -106,7 +107,7 @@ static uint _tests_failed = 0; /* Number of conditions failed  */
 	typeof(actual) _a = actual;                             \
 	_tests_total++;                                         \
 	if (_a <= 0) {                                          \
-		TRACEF("%s: expected > 0 "                      \
+		TLOGI("%s: expected > 0 "                      \
 		    "actual " #actual " (%d)\n", msg, (int)_a); \
 		_tests_failed++;                                \
 		_all_ok = false;                                \
