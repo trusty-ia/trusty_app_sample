@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 The Android Open Source Project
+ * Copyright (C) 2014-2015 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,15 +24,15 @@
 #include <trace.h>
 
 /* Expected limits: should be in sync with kernel settings */
-#define MAX_USER_HANDLES    64    /* max number of user handles */
-#define MAX_PORT_PATH_LEN   64    /* max length of port path name   */
-#define MAX_PORT_BUF_NUM    32    /* max number of per port buffers */
-#define MAX_PORT_BUF_SIZE  512    /* max size of per port buffer    */
+#define MAX_USER_HANDLES     64    /* max number of user handles */
+#define MAX_PORT_PATH_LEN    64    /* max length of port path name   */
+#define MAX_PORT_BUF_NUM     32    /* max number of per port buffers */
+#define MAX_PORT_BUF_SIZE  4096    /* max size of per port buffer    */
 
 #define LOG_TAG "ipc-unittest-main"
 
 #define TLOGI(fmt, ...) \
-    fprintf(stderr, "%s: " fmt, LOG_TAG, ## __VA_ARGS__)
+    fprintf(stderr, "%s: %d: " fmt, LOG_TAG, __LINE__,  ## __VA_ARGS__)
 
 #define MSEC 1000000UL
 #define SRV_PATH_BASE   "com.android.ipc-unittest"
@@ -152,31 +152,13 @@ static void run_wait_negative_test(void)
 	EXPECT_EQ (ERR_BAD_HANDLE, rc, "wait on invalid handle");
 
 	/* waiting on non-existing handle that is in valid range. */
-	for (uint i = 0; i < MAX_USER_HANDLES; i++) {
+	for (uint i = 2; i < MAX_USER_HANDLES; i++) {
 		rc = wait(i, &event, timeout);
 		EXPECT_EQ (ERR_NOT_FOUND, rc, "wait on invalid handle");
 	}
 
 	TEST_END
 }
-
-/*
- *  wait on any handle negative test
- */
-static void run_wait_any_negative_test(void)
-{
-	int rc;
-	uevent_t event;
-	lk_time_t timeout = 1000;  /* 1 sec */
-
-	TEST_BEGIN(__func__);
-
-	rc = wait_any(&event, timeout);
-	EXPECT_EQ (ERR_NOT_FOUND, rc, "no handles");
-
-	TEST_END
-}
-
 
 /*
  *  Close handle unittest
@@ -196,7 +178,7 @@ static void run_close_handle_negative_test(void)
 	EXPECT_EQ (ERR_BAD_HANDLE, rc, "closing invalid handle");
 
 	/* closing non-existing handle that is in valid range. */
-	for (uint i = 0; i < MAX_USER_HANDLES; i++) {
+	for (uint i = 2; i < MAX_USER_HANDLES; i++) {
 		rc = close(i);
 		EXPECT_EQ (ERR_NOT_FOUND, rc, "closing invalid handle");
 	}
@@ -222,7 +204,7 @@ static void  run_set_cookie_negative_test(void)
 	EXPECT_EQ (ERR_BAD_HANDLE, rc, "set cookie for invalid handle");
 
 	/* set cookie for non-existing handle that is in valid range. */
-	for (uint i = 0; i < MAX_USER_HANDLES; i++) {
+	for (uint i = 2; i < MAX_USER_HANDLES; i++) {
 		rc = set_cookie(i, (void *) 0x3BEEF);
 		EXPECT_EQ (ERR_NOT_FOUND, rc, "set cookie for invalid handle");
 	}
@@ -290,7 +272,7 @@ static void run_port_create_test (void)
 	TEST_BEGIN(__func__);
 
 	/* create maximum number of ports */
-	for (i = 0; i < MAX_USER_HANDLES-1; i++) {
+	for (i = 2; i < MAX_USER_HANDLES-1; i++) {
 		sprintf(path, "%s.port.%s%d", SRV_PATH_BASE, "test", i);
 		rc = port_create(path, 2, MAX_PORT_BUF_SIZE, 0);
 		EXPECT_GE_ZERO (rc, "create ports");
@@ -318,7 +300,7 @@ static void run_port_create_test (void)
 	EXPECT_EQ (ERR_NO_RESOURCES, rc, "max ports");
 
 	/* close them all  */
-	for (i = 0; i < MAX_USER_HANDLES; i++) {
+	for (i = 2; i < MAX_USER_HANDLES; i++) {
 		/* close a valid port  */
 		rc = close(ports[i]);
 		EXPECT_EQ (NO_ERROR, rc, "closing port");
@@ -348,7 +330,7 @@ static void run_wait_on_port_test (void)
 	#define COOKIE_BASE 100
 
 	/* create maximum number of ports */
-	for (uint i = 0; i < MAX_USER_HANDLES; i++) {
+	for (uint i = 2; i < MAX_USER_HANDLES; i++) {
 		sprintf(path, "%s.port.%s%d", SRV_PATH_BASE, "test", i);
 		rc = port_create(path, 2, MAX_PORT_BUF_SIZE, 0);
 		EXPECT_GE_ZERO (rc, "max ports");
@@ -359,7 +341,7 @@ static void run_wait_on_port_test (void)
 	}
 
 	/* wait on each individual port */
-	for (uint i = 0; i < MAX_USER_HANDLES; i++) {
+	for (uint i = 2; i < MAX_USER_HANDLES; i++) {
 		/* wait with zero timeout */
 		rc = wait(ports[i], &event, 0);
 		EXPECT_EQ (NO_ERROR, rc, "zero timeout");
@@ -378,7 +360,7 @@ static void run_wait_on_port_test (void)
 	EXPECT_EQ (NO_ERROR, rc, "non-zero timeout");
 
 	/* close them all */
-	for (uint i = 0; i < MAX_USER_HANDLES; i++) {
+	for (uint i = 2; i < MAX_USER_HANDLES; i++) {
 		/* close a valid port  */
 		rc = close(ports[i]);
 		EXPECT_EQ (NO_ERROR, rc, "closing closed port");
@@ -434,7 +416,7 @@ static void run_connect_close_test(void)
 
 	sprintf(path, "%s.srv.%s", SRV_PATH_BASE, "datasink");
 
-	for (uint j = 0; j < MAX_USER_HANDLES; j++) {
+	for (uint j = 2; j < MAX_USER_HANDLES; j++) {
 		/* do several iterations to make sure we are not
 		   not loosing handles */
 		for (uint i = 0; i < countof(chans); i++) {
@@ -638,7 +620,7 @@ static void run_accept_negative_test(void)
 	EXPECT_EQ (ERR_BAD_HANDLE, rc, "accept on invalid handle");
 
 	/* accept on non-existing handle that is in valid range */
-	for (uint i = 0; i < MAX_USER_HANDLES; i++) {
+	for (uint i = 2; i < MAX_USER_HANDLES; i++) {
 		rc = accept(i);
 		EXPECT_EQ (ERR_NOT_FOUND, rc, "accept on invalid handle");
 	}
@@ -671,7 +653,7 @@ static void run_accept_test (void)
 	#define COOKIE_BASE 100
 
 	/* create maximum number of ports */
-	for (uint i = 0; i < MAX_USER_HANDLES; i++) {
+	for (uint i = 2; i < MAX_USER_HANDLES; i++) {
 		sprintf(path, "%s.port.accept%d", SRV_PATH_BASE, i);
 		rc = port_create(path, 2, MAX_PORT_BUF_SIZE, 0);
 		EXPECT_GE_ZERO (rc, "max ports");
@@ -687,7 +669,7 @@ static void run_accept_test (void)
 	close(rc);
 
 	/* handle incoming connections */
-	for (uint i = 0; i < MAX_USER_HANDLES; i++ ) {
+	for (uint i = 2; i < MAX_USER_HANDLES; i++ ) {
 
 		rc = wait_any(&event, 1000);
 		EXPECT_EQ (1, rc, "accept test");
@@ -704,9 +686,9 @@ static void run_accept_test (void)
 	}
 
 	/* free 1 handle  so we have room and repeat test */
-	rc = close(ports[0]);
+	rc = close(ports[2]);
 	EXPECT_EQ(NO_ERROR, 0, "close accept test");
-	ports[0] = INVALID_IPC_HANDLE;
+	ports[2] = INVALID_IPC_HANDLE;
 
 
 	/* poke connect service to initiate connections to us */
@@ -715,7 +697,7 @@ static void run_accept_test (void)
 	close(rc);
 
 	/* handle incoming connections */
-	for (uint i = 0; i < MAX_USER_HANDLES-1; i++ ) {
+	for (uint i = 2; i < MAX_USER_HANDLES-1; i++ ) {
 
 		rc = wait_any(&event, 3000);
 		EXPECT_EQ (1, rc, "accept test");
@@ -726,14 +708,14 @@ static void run_accept_test (void)
 		EXPECT_EQ (exp_cookie, event.cookie, "accept test");
 
 		rc = accept (event.handle);
-		EXPECT_EQ (NO_ERROR, rc, "accept test");
+		EXPECT_EQ (2, rc, "accept test");
 
 		rc = close (rc);
 		EXPECT_EQ (NO_ERROR, rc, "accept test");
 	}
 
 	/* close them all */
-	for (uint i = 1; i < MAX_USER_HANDLES; i++) {
+	for (uint i = 3; i < MAX_USER_HANDLES; i++) {
 		/* close a valid port  */
 		rc = close(ports[i]);
 		EXPECT_EQ (NO_ERROR, rc, "close port");
@@ -764,7 +746,7 @@ static void run_get_msg_negative_test(void)
 	EXPECT_EQ (ERR_BAD_HANDLE, rc, "get_msg on invalid handle");
 
 	/* get_msg on non-existing handle that is in valid range. */
-	for (uint i = 0; i < MAX_USER_HANDLES; i++) {
+	for (uint i = 2; i < MAX_USER_HANDLES; i++) {
 		rc = get_msg(i, &inf);
 		EXPECT_EQ (ERR_NOT_FOUND, rc, "get_msg on invalid handle");
 	}
@@ -814,7 +796,7 @@ static void run_put_msg_negative_test(void)
 	EXPECT_EQ (ERR_BAD_HANDLE, rc, "put_msg on invalid handle");
 
 	/* put_msg on non-existing handle that is in valid range */
-	for (uint i = 0; i < MAX_USER_HANDLES; i++) {
+	for (uint i = 2; i < MAX_USER_HANDLES; i++) {
 		rc = put_msg (i, 0);
 		EXPECT_EQ (ERR_NOT_FOUND, rc, "put_msg on invalid handle");
 	}
@@ -930,7 +912,7 @@ static void run_send_msg_negative_test(void)
 	EXPECT_EQ (ERR_FAULT, rc, "send_msg on NULL msg");
 
 	/* send_msg on non-existing handle that is in valid range */
-	for (uint i = 0; i < MAX_USER_HANDLES; i++) {
+	for (uint i = 2; i < MAX_USER_HANDLES; i++) {
 		rc = send_msg(i, &msg);
 		EXPECT_EQ (ERR_NOT_FOUND, rc, "send on invalid handle");
 
@@ -1031,7 +1013,7 @@ static void run_read_msg_negative_test(void)
 	EXPECT_EQ (ERR_FAULT, rc, "read_msg on NULL msg");
 
 	/* send_msg on non-existing handle that is in valid range */
-	for (uint i = 0; i < MAX_USER_HANDLES; i++) {
+	for (uint i = 2; i < MAX_USER_HANDLES; i++) {
 		rc = read_msg(i, 0, 0, &rx_msg);
 		EXPECT_EQ (ERR_NOT_FOUND, rc, "read_msg on non existing handle");
 
@@ -1116,7 +1098,7 @@ static void run_read_msg_negative_test(void)
 	rx_iov[1].base = rx_buf + sizeof(rx_buf) / 2;
 
 	/* read with invalid offset with valid iovec array */
-	rc = read_msg(chan, inf.id, inf.len, &rx_msg);
+	rc = read_msg(chan, inf.id, inf.len + 1, &rx_msg);
 	EXPECT_EQ (ERR_INVALID_ARGS, rc, "read with invalid offset");
 
 	/* read with handles */
@@ -1336,7 +1318,6 @@ static void run_all_tests (void)
 
 	/* negative tests */
 	run_wait_negative_test();
-	run_wait_any_negative_test();
 	run_close_handle_negative_test();
 	run_set_cookie_negative_test();
 	run_port_create_negative_test();
@@ -1356,19 +1337,21 @@ static void run_all_tests (void)
 }
 
 /*
- *
+ *  Application entry point
  */
-static void main_loop (void)
+int main(void)
 {
 	int rc;
 	char path[MAX_PORT_PATH_LEN];
+
+	TLOGI ("Welcome to IPC unittest!!!\n");
 
 	/* create control port and just wait on it */
         sprintf(path, "%s.%s", SRV_PATH_BASE, "ctrl");
 	rc = port_create(path,  1, MAX_PORT_BUF_SIZE, 0);
 	if (rc < 0) {
 		TLOGI("failed (%d) to create ctrl port\n", rc );
-		return;
+		return rc;
 	}
 
 	/* and just wait forever for now */
@@ -1383,30 +1366,19 @@ static void main_loop (void)
 				/* get connection request */
 				rc = accept(uevt.handle);
 				if (rc >= 0) {
+					/* then run unittest test */
+					run_all_tests();
+
 					/* and close it */
 					close(rc);
 				}
 			}
 		}
+		if (rc < 0)
+			break;
 	}
+
+	return rc;
 }
 
-/*
- *  Application entry point
- */
-int main(void)
-{
-	TLOGI ("Welcome to IPC unittest!!!\n");
-
-	/* wait a bit until things are settled */
-	nanosleep (0, 0, 5000 * MSEC);
-
-	/* then run unittest test */
-	run_all_tests();
-
-	/* and enter main loop */
-	main_loop ();
-
-	return 0;
-}
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 The Android Open Source Project
+ * Copyright (C) 2014-2015 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,6 +51,10 @@ static handle_t connect_port  = INVALID_IPC_HANDLE;
 static handle_t datasink_port = INVALID_IPC_HANDLE;
 static handle_t echo_port     = INVALID_IPC_HANDLE;
 
+
+static void echo_handle_chan(const uevent_t *ev);
+static void datasink_handle_chan(const uevent_t *ev);
+
 /************************************************************************/
 
 /*
@@ -84,13 +88,14 @@ static void _close_channel (handle_t chan)
 /*
  *  Create port helper
  */
-static int _create_port(const char *name, uint nbuf, void *cookie)
+static int _create_port(const char *name, uint buf_num, uint buf_sz,
+                        void *cookie)
 {
 	handle_t port;
 	char path[MAX_PORT_PATH_LEN];
 
 	sprintf(path, "%s.srv.%s", SRV_PATH_BASE, name);
-	int rc = port_create(path, nbuf, 64, 0);
+	int rc = port_create(path, buf_num, buf_sz, 0);
 	if (rc < 0) {
 		TLOGI("Failed (%d) to create port\n", rc);
 		return INVALID_IPC_HANDLE;
@@ -128,32 +133,32 @@ static int init_services(void)
 	int rc;
 	TLOGI ("Init unittest services!!!\n");
 
-	rc  = _create_port ("closer1", 2, closer1_handle_port);
+	rc = _create_port("closer1", 2, 64, closer1_handle_port);
 	if (rc < 0)
 		return -1;
 	closer1_port = (handle_t) rc;
 
-	rc = _create_port ("closer2", 2,  closer2_handle_port);
+	rc = _create_port("closer2", 2, 64, closer2_handle_port);
 	if (rc < 0)
 		return -1;
 	closer2_port = (handle_t) rc;
 
-	rc = _create_port ("closer3", 2, closer3_handle_port);
+	rc = _create_port("closer3", 2, 64, closer3_handle_port);
 	if (rc < 0)
 		return -1;
 	closer3_port = (handle_t) rc;
 
-	rc = _create_port ("connect", 2, connect_handle_port);
+	rc = _create_port("connect", 2, 64, connect_handle_port);
 	if (rc < 0)
 		return -1;
 	connect_port = (handle_t) rc;
 
-	rc = _create_port("datasink", 2, datasink_handle_port);
+	rc = _create_port("datasink", 2, 64, datasink_handle_port);
 	if (rc < 0)
 		return -1;
 	datasink_port = (handle_t) rc;
 
-	rc = _create_port("echo", 8, echo_handle_port);
+	rc = _create_port("echo", 8, 4096, echo_handle_port);
 	if (rc < 0)
 		return -1;
 	echo_port = (handle_t) rc;
@@ -175,7 +180,8 @@ static void connect_handle_port(const uevent_t *ev)
 		close (ev->handle);
 
 		/* and recreate it */
-		connect_port = _create_port("connect", 2, connect_handle_port);
+		connect_port = _create_port("connect", 2, 64,
+		                             connect_handle_port);
 		return;
 	}
 
@@ -191,7 +197,7 @@ static void connect_handle_port(const uevent_t *ev)
 		close (rc);
 
 		/* but then issue a series of connect requests */
-		for (uint i = 0; i < MAX_USER_HANDLES; i++) {
+		for (uint i = 2; i < MAX_USER_HANDLES; i++) {
 			sprintf(path, "%s.port.accept%d", SRV_PATH_BASE, i);
 			rc = connect(path, 1000);
 			close(rc);
@@ -213,7 +219,8 @@ static void closer1_handle_port(const uevent_t *ev)
 		/* close port */
 		close (ev->handle);
 		/* and recreate it */
-		closer1_port = _create_port("closer1", 2, closer1_handle_port);
+		closer1_port = _create_port("closer1", 2, 64,
+		                             closer1_handle_port);
 		return;
 	}
 
@@ -248,12 +255,13 @@ static void closer2_handle_port(const uevent_t *ev)
 		/* close port */
 		close (ev->handle);
 		/* and recreate it */
-		closer2_port = _create_port("closer1", 2, closer2_handle_port);
+		closer2_port = _create_port("closer2", 2, 64,
+		                             closer2_handle_port);
 		return;
 	}
 
 	if (ev->event & IPC_HANDLE_POLL_READY) {
-		/* new connection request, bunp counter */
+		/* new connection request, bump counter */
 		_conn_cnt++;
 
 		if (_conn_cnt & 1) {
@@ -263,7 +271,8 @@ static void closer2_handle_port(const uevent_t *ev)
 		/* then close the port without accepting any connections */
 		_close_port(closer2_port);
 		/* and recreate port again */
-		closer2_port = _create_port ("closer2", 2, closer2_handle_port);
+		closer2_port = _create_port ("closer2", 2, 64,
+		                              closer2_handle_port);
 		return;
 	}
 }
@@ -291,7 +300,8 @@ static void closer3_handle_port(const uevent_t *ev)
 		close (ev->handle);
 
 		/* and recreate it */
-		closer2_port = _create_port("closer1", 2, closer3_handle_port);
+		closer3_port = _create_port("closer3", 2, 64,
+		                             closer3_handle_port);
 		return;
 	}
 
@@ -307,8 +317,13 @@ static void closer3_handle_port(const uevent_t *ev)
 		/* add it to connection pool */
 		_chans[_chan_cnt++] = (handle_t) rc;
 
+		set_cookie((handle_t) rc, datasink_handle_chan);
+
 		/* when max number of connection reached */
 		if (_chan_cnt == countof(_chans)) {
+			/* wait a bit */
+			nanosleep (0, 0, 100 * MSEC);
+
 			/* close them all */
 			for (uint i = 0; i < countof(_chans); i++ ) {
 				_close_channel(_chans[i]);
@@ -398,7 +413,7 @@ static void datasink_handle_port(const uevent_t *ev)
 		close (ev->handle);
 
 		/* and recreate it */
-		datasink_port = _create_port("datasink", 2,
+		datasink_port = _create_port("datasink", 2, 64,
 		                              datasink_handle_port);
 		return;
 	}
@@ -425,23 +440,25 @@ static void datasink_handle_port(const uevent_t *ev)
 
 /******************************   echo service    **************************/
 
-static int echo_handle_msg(const uevent_t *ev)
+static uint8_t echo_msg_buf[4096];
+
+static int _echo_handle_message(const uevent_t *ev, int delay)
 {
 	int rc;
-	uint8_t buf[64];
 	ipc_msg_info_t inf;
 	ipc_msg_t      msg;
 	iovec_t        iov;
 
-	iov.base = buf;
-	iov.len  = sizeof(buf);
-	msg.num_iov = 1;
-	msg.iov     = &iov;
-	msg.num_handles = 0;
-	msg.handles  = NULL;
-
 	/* for all messages */
 	for (;;) {
+		/* init message structure */
+		iov.base = echo_msg_buf;
+		iov.len  = sizeof(echo_msg_buf);
+		msg.num_iov = 1;
+		msg.iov     = &iov;
+		msg.num_handles = 0;
+		msg.handles  = NULL;
+
 		/* get message */
 		rc = get_msg(ev->handle, &inf);
 		if (rc == ERR_NO_MSG)
@@ -454,14 +471,17 @@ static int echo_handle_msg(const uevent_t *ev)
 		}
 
 		/* read content */
-		rc = read_msg (ev->handle, inf.id, 0, &msg);
+		rc = read_msg(ev->handle, inf.id, 0, &msg);
 		if (rc < 0) {
 			TLOGI("failed (%d) to read_msg for chan (%d)\n",
 			      rc, ev->handle);
 			return rc;
 		}
 
-		/* retire it */
+		/* update numvber of bytes recieved */
+		iov.len = (size_t) rc;
+
+		/* retire original message */
 		rc = put_msg(ev->handle, inf.id);
 		if (rc != NO_ERROR) {
 			TLOGI("failed (%d) to put_msg for chan (%d)\n",
@@ -470,10 +490,12 @@ static int echo_handle_msg(const uevent_t *ev)
 		}
 
 		/* sleep a bit an send it back */
-		nanosleep (0, 0, 1000);
+		if (delay) {
+			nanosleep (0, 0, 1000);
+		}
 
-		/* end send it back */
-		rc = send_msg (ev->handle, &msg);
+		/* and send it back */
+		rc = send_msg(ev->handle, &msg);
 		if (rc < 0) {
 			TLOGI("failed (%d) to send_msg for chan (%d)\n",
 			      rc, ev->handle);
@@ -481,6 +503,11 @@ static int echo_handle_msg(const uevent_t *ev)
 		}
 	}
 	return NO_ERROR;
+}
+
+static int echo_handle_msg(const uevent_t *ev)
+{
+	return _echo_handle_message(ev, false);
 }
 
 /*
@@ -527,7 +554,8 @@ static void echo_handle_port(const uevent_t *ev)
 		close (ev->handle);
 
 		/* and recreate it */
-		echo_port = _create_port("echo", 8, echo_handle_port);
+		echo_port = _create_port("echo", 8, 4096,
+		                          echo_handle_port);
 		return;
 	}
 
