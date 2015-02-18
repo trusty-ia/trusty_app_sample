@@ -45,10 +45,17 @@ static handle_t connect_port  = INVALID_IPC_HANDLE;
 static handle_t datasink_port = INVALID_IPC_HANDLE;
 static handle_t echo_port     = INVALID_IPC_HANDLE;
 static handle_t uuid_port     = INVALID_IPC_HANDLE;
+static handle_t ta_only_port  = INVALID_IPC_HANDLE;
+static handle_t ns_only_port  = INVALID_IPC_HANDLE;
 
 static void uuid_handle_chan(const uevent_t *ev);
 static void echo_handle_chan(const uevent_t *ev);
 static void datasink_handle_chan(const uevent_t *ev);
+
+
+#define IPC_PORT_ALLOW_ALL  (  IPC_PORT_ALLOW_NS_CONNECT \
+                             | IPC_PORT_ALLOW_TA_CONNECT \
+                            )
 
 /************************************************************************/
 
@@ -84,13 +91,13 @@ static void _close_channel (handle_t chan)
  *  Create port helper
  */
 static int _create_port(const char *name, uint buf_num, uint buf_sz,
-                        void *cookie)
+                        void *cookie, uint flags)
 {
 	handle_t port;
 	char path[MAX_PORT_PATH_LEN];
 
 	sprintf(path, "%s.srv.%s", SRV_PATH_BASE, name);
-	int rc = port_create(path, buf_num, buf_sz, 0);
+	int rc = port_create(path, buf_num, buf_sz, flags);
 	if (rc < 0) {
 		TLOGI("Failed (%d) to create port\n", rc);
 		return INVALID_IPC_HANDLE;
@@ -119,6 +126,8 @@ static void kill_services(void)
 	_close_port(datasink_port);
 	_close_port(echo_port);
 	_close_port(uuid_port);
+	_close_port(ns_only_port);
+	_close_port(ta_only_port);
 }
 
 /*
@@ -129,40 +138,59 @@ static int init_services(void)
 	int rc;
 	TLOGI ("Init unittest services!!!\n");
 
-	rc = _create_port("closer1", 2, 64, closer1_handle_port);
+	rc = _create_port("closer1", 2, 64, closer1_handle_port,
+	                  IPC_PORT_ALLOW_ALL);
 	if (rc < 0)
 		return -1;
 	closer1_port = (handle_t) rc;
 
-	rc = _create_port("closer2", 2, 64, closer2_handle_port);
+	rc = _create_port("closer2", 2, 64, closer2_handle_port,
+	                  IPC_PORT_ALLOW_ALL);
 	if (rc < 0)
 		return -1;
 	closer2_port = (handle_t) rc;
 
-	rc = _create_port("closer3", 2, 64, closer3_handle_port);
+	rc = _create_port("closer3", 2, 64, closer3_handle_port,
+	                  IPC_PORT_ALLOW_ALL);
 	if (rc < 0)
 		return -1;
 	closer3_port = (handle_t) rc;
 
-	rc = _create_port("connect", 2, 64, connect_handle_port);
+	rc = _create_port("connect", 2, 64, connect_handle_port,
+	                  IPC_PORT_ALLOW_TA_CONNECT);
 	if (rc < 0)
 		return -1;
 	connect_port = (handle_t) rc;
 
-	rc = _create_port("datasink", 2, 64, datasink_handle_port);
+	rc = _create_port("datasink", 2, 64, datasink_handle_port,
+	                  IPC_PORT_ALLOW_ALL);
 	if (rc < 0)
 		return -1;
 	datasink_port = (handle_t) rc;
 
-	rc = _create_port("echo", 8, 4096, echo_handle_port);
+	rc = _create_port("echo", 8, 4096, echo_handle_port,
+	                  IPC_PORT_ALLOW_ALL);
 	if (rc < 0)
 		return -1;
 	echo_port = (handle_t) rc;
 
-	rc = _create_port("uuid", 2, 64, uuid_handle_port);
+	rc = _create_port("uuid", 2, 64, uuid_handle_port,
+	                  IPC_PORT_ALLOW_ALL);
 	if (rc < 0)
 		return -1;
 	uuid_port = (handle_t) rc;
+
+	rc = _create_port("ns_only", 8, 64, datasink_handle_port,
+	                  IPC_PORT_ALLOW_NS_CONNECT);
+	if (rc < 0)
+		return -1;
+	ns_only_port = (handle_t) rc;
+
+	rc = _create_port("ta_only", 8, 64, datasink_handle_port,
+	                  IPC_PORT_ALLOW_TA_CONNECT);
+	if (rc < 0)
+		return -1;
+	ta_only_port = (handle_t) rc;
 
 	return 0;
 }
@@ -184,7 +212,8 @@ static void connect_handle_port(const uevent_t *ev)
 
 		/* and recreate it */
 		connect_port = _create_port("connect", 2, 64,
-		                             connect_handle_port);
+		                             connect_handle_port,
+		                             IPC_PORT_ALLOW_TA_CONNECT);
 		return;
 	}
 
@@ -224,7 +253,8 @@ static void closer1_handle_port(const uevent_t *ev)
 		close (ev->handle);
 		/* and recreate it */
 		closer1_port = _create_port("closer1", 2, 64,
-		                             closer1_handle_port);
+		                             closer1_handle_port,
+		                             IPC_PORT_ALLOW_ALL);
 		return;
 	}
 
@@ -260,7 +290,8 @@ static void closer2_handle_port(const uevent_t *ev)
 		close (ev->handle);
 		/* and recreate it */
 		closer2_port = _create_port("closer2", 2, 64,
-		                             closer2_handle_port);
+		                             closer2_handle_port,
+		                             IPC_PORT_ALLOW_ALL);
 		return;
 	}
 
@@ -276,7 +307,8 @@ static void closer2_handle_port(const uevent_t *ev)
 		_close_port(closer2_port);
 		/* and recreate port again */
 		closer2_port = _create_port ("closer2", 2, 64,
-		                              closer2_handle_port);
+		                              closer2_handle_port,
+		                              IPC_PORT_ALLOW_ALL);
 		return;
 	}
 }
@@ -306,7 +338,8 @@ static void closer3_handle_port(const uevent_t *ev)
 
 		/* and recreate it */
 		closer3_port = _create_port("closer3", 2, 64,
-		                             closer3_handle_port);
+		                             closer3_handle_port,
+		                             IPC_PORT_ALLOW_ALL);
 		return;
 	}
 
@@ -414,14 +447,8 @@ static void datasink_handle_port(const uevent_t *ev)
 		TLOGI("error event (0x%x) for port (%d)\n",
 		       ev->event, ev->handle);
 
-		/* TODO: need to kill channels */
-
 		/* close port */
 		close (ev->handle);
-
-		/* and recreate it */
-		datasink_port = _create_port("datasink", 2, 64,
-		                              datasink_handle_port);
 		return;
 	}
 
@@ -557,14 +584,8 @@ static void echo_handle_port(const uevent_t *ev)
 		/* log error */
 		TLOGI("error event (0x%x) for port (%d)\n",
 		       ev->event, ev->handle);
-		/* TODO: need to kill channels */
-
 		/* close port */
 		close (ev->handle);
-
-		/* and recreate it */
-		echo_port = _create_port("echo", 8, 4096,
-		                          echo_handle_port);
 		return;
 	}
 
@@ -607,13 +628,12 @@ static void uuid_handle_port(const uevent_t *ev)
 		TLOGI("error event (0x%x) for port (%d)\n",
 		       ev->event, ev->handle);
 
-		/* TODO: need to kill channels */
-
 		/* close port */
 		close (ev->handle);
 
 		/* and recreate it */
-		uuid_port = _create_port("uuid", 2, 64, uuid_handle_port);
+		uuid_port = _create_port("uuid", 2, 64, uuid_handle_port,
+		                         IPC_PORT_ALLOW_ALL);
 		return;
 	}
 

@@ -532,7 +532,8 @@ static void run_connect_selfie_test (void)
 	   It is not very usefull scenario, just to make sure that
 	   nothing bad is happening */
 	sprintf(path, "%s.main.%s", SRV_PATH_BASE, "selfie");
-	rc = port_create ( path, 2, MAX_PORT_BUF_SIZE, 0);
+	rc = port_create(path, 2, MAX_PORT_BUF_SIZE,
+	                 IPC_PORT_ALLOW_TA_CONNECT);
 	EXPECT_GE_ZERO (rc, "selfie");
 
 	if (rc >= 0) {
@@ -598,6 +599,36 @@ static void run_connect_selfie_test (void)
 		rc = close (test_port);
 		EXPECT_EQ (NO_ERROR, rc, "close selfie");
 	}
+
+	TEST_END
+}
+
+static void run_connect_access_test(void)
+{
+	int rc;
+	char path[MAX_PORT_PATH_LEN];
+
+	TEST_BEGIN(__func__);
+
+	/* open connection to NS only accessible service */
+	sprintf(path, "%s.srv.%s", SRV_PATH_BASE,  "ns_only");
+	rc = connect(path, 1000);
+
+	/* It is expected to fail */
+	EXPECT_EQ(ERR_ACCESS_DENIED, rc, "connect to ns_only");
+
+	if (rc >= 0)
+		close((handle_t)rc);
+
+	/* open connection to TA only accessible service */
+	sprintf(path, "%s.srv.%s", SRV_PATH_BASE,  "ta_only");
+	rc = connect(path, 1000);
+
+	/* it is expected to succeed */
+	EXPECT_GE_ZERO(rc, "connect to ta_only");
+
+	if (rc >= 0)
+		close((handle_t)rc);
 
 	TEST_END
 }
@@ -675,7 +706,8 @@ static void run_accept_test (void)
 	/* create maximum number of ports */
 	for (uint i = 2; i < MAX_USER_HANDLES; i++) {
 		sprintf(path, "%s.port.accept%d", SRV_PATH_BASE, i);
-		rc = port_create(path, 2, MAX_PORT_BUF_SIZE, 0);
+		rc = port_create(path, 2, MAX_PORT_BUF_SIZE,
+		                 IPC_PORT_ALLOW_TA_CONNECT);
 		EXPECT_GE_ZERO (rc, "max ports");
 		ports[i] = (handle_t) rc;
 
@@ -782,7 +814,8 @@ static void run_get_msg_negative_test(void)
 	/* calling get_msg on port handle should fail
 	   because get_msg is only applicable to channels */
 	sprintf(path, "%s.main.%s", SRV_PATH_BASE,  "datasink");
-	rc = port_create (path, 2, MAX_PORT_BUF_SIZE, 0);
+	rc = port_create(path, 2, MAX_PORT_BUF_SIZE,
+	                 IPC_PORT_ALLOW_TA_CONNECT);
 	EXPECT_GE_ZERO (rc, "create datasink port");
 	port = (handle_t) rc;
 
@@ -832,7 +865,8 @@ static void run_put_msg_negative_test(void)
 	/* calling put_msg on port handle should fail
 	   because put_msg is only applicable to channels */
 	sprintf(path, "%s.main.%s", SRV_PATH_BASE,  "datasink");
-	rc = port_create (path, 2, MAX_PORT_BUF_SIZE, 0);
+	rc = port_create(path, 2, MAX_PORT_BUF_SIZE,
+	                 IPC_PORT_ALLOW_TA_CONNECT);
 	EXPECT_GE_ZERO (rc, "create datasink port");
 	port = (handle_t) rc;
 
@@ -952,7 +986,8 @@ static void run_send_msg_negative_test(void)
 	/* calling send_msg on port handle should fail
 	   because send_msg is only applicable to channels */
 	sprintf(path, "%s.main.%s", SRV_PATH_BASE,  "datasink");
-	rc = port_create (path, 2, MAX_PORT_BUF_SIZE, 0);
+	rc = port_create(path, 2, MAX_PORT_BUF_SIZE,
+	                 IPC_PORT_ALLOW_TA_CONNECT);
 	EXPECT_GE_ZERO (rc, "create datasink port");
 	port = (handle_t) rc;
 
@@ -1053,7 +1088,8 @@ static void run_read_msg_negative_test(void)
 	/* calling read_msg on port handle should fail
 	   because read_msg is only applicable to channels */
 	sprintf(path, "%s.main.%s", SRV_PATH_BASE,  "datasink");
-	rc = port_create (path, 2, MAX_PORT_BUF_SIZE, 0);
+	rc = port_create(path, 2, MAX_PORT_BUF_SIZE,
+	                 IPC_PORT_ALLOW_TA_CONNECT);
 	EXPECT_GE_ZERO (rc, "create datasink port");
 	port = (handle_t) rc;
 
@@ -1343,6 +1379,7 @@ static void run_all_tests (void)
 	run_connect_close_by_peer_test("closer2");
 	run_connect_close_by_peer_test("closer3");
 	run_connect_selfie_test();
+	run_connect_access_test();
 
 	/* negative tests */
 	run_wait_negative_test();
@@ -1377,7 +1414,8 @@ int main(void)
 
 	/* create control port and just wait on it */
         sprintf(path, "%s.%s", SRV_PATH_BASE, "ctrl");
-	rc = port_create(path,  1, MAX_PORT_BUF_SIZE, 0);
+	rc = port_create(path,  1, MAX_PORT_BUF_SIZE,
+	                 IPC_PORT_ALLOW_NS_CONNECT);
 	if (rc < 0) {
 		TLOGI("failed (%d) to create ctrl port\n", rc );
 		return rc;
