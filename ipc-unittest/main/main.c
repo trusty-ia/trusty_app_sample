@@ -735,7 +735,7 @@ static void run_accept_test (void)
 		   have any room for handles */
 		rc = accept (event.handle, &peer_uuid);
 		EXPECT_EQ (ERR_NO_RESOURCES, rc, "accept test");
-		
+
 		/* check peer uuid */
 		rc1 = memcmp(&peer_uuid, &zero_uuid, sizeof(zero_uuid));
 		EXPECT_EQ (0, rc1, "accept test")
@@ -927,10 +927,18 @@ static void run_send_msg_test(void)
 		chan = (handle_t) rc;
 		for (uint i = 0; i < 10000; i++) {
 			rc = send_msg(chan, &msg);
-			EXPECT_EQ (64, rc, "send_msg bulk")
-			if (rc != 64) {
-				TLOGI("%s: abort (rc = %d) test\n",
-				           __func__, rc);
+			if (rc == ERR_NOT_ENOUGH_BUFFER) { /* wait for room */
+				uevent_t  uevt;
+				uint exp_event = IPC_HANDLE_POLL_SEND_UNBLOCKED;
+				rc = wait(chan, &uevt, 1000);
+				EXPECT_EQ (1, rc, "waiting for space");
+				EXPECT_EQ (chan, uevt.handle, "waiting for space");
+				EXPECT_EQ (exp_event, uevt.event,  "waiting for space");
+			} else {
+				EXPECT_EQ (64, rc, "send_msg bulk")
+			}
+			if (!_all_ok) {
+				TLOGI("%s: abort (rc = %d) test\n", __func__, rc);
 				break;
 			}
 		}
@@ -1254,54 +1262,7 @@ static void run_end_to_end_msg_test(void)
 			tx_cnt--;
 		}
 
-		/* send/receive 10000 messages asynchronously having no more
-		   then fixed number (max number of buffers) outstanding
-		   messages
-		 */
-		rx_cnt = tx_cnt = 10000;
-		while (tx_cnt || rx_cnt) {
-			uint watermark = 8;
-
-			/* send to watermark outstaning messages */
-			while (tx_cnt && ((rx_cnt - tx_cnt) < watermark)) {
-				rc = send_msg(chan, &tx_msg);
-				EXPECT_EQ (64, rc, "sending msg to echo");
-				if (rc < 0)
-					goto abort_test;
-				tx_cnt--;
-			}
-
-			/* wait for reply */
-			rc = wait(chan, &uevt, 1000);
-			EXPECT_EQ (1, rc, "waiting for reply");
-			EXPECT_EQ (chan, uevt.handle, "wait on channel");
-
-			while (rx_cnt) {
-				/* get a reply */
-				rc = get_msg(chan, &inf);
-				if (rc == ERR_NO_MSG)
-					break;  /* no more messages  */
-
-				EXPECT_EQ (NO_ERROR, rc, "getting echo msg");
-
-				/* read reply data */
-				rc = read_msg(chan, inf.id, 0, &rx_msg);
-				EXPECT_EQ (64, rc, "reading echo msg");
-
-				/* discard reply */
-				rc = put_msg(chan, inf.id);
-				EXPECT_EQ (NO_ERROR, rc, "putting echo msg");
-
-				rx_cnt--;
-			}
-		}
-
-
-		/* send/receive 10000 messages asynchronously.
-		   Currently this test always fails because it is
-		   possible to fill all buffers which would prevent the
-		   other side from sending us reply
-		 */
+		/* send/receive 10000 messages asynchronously. */
 		rx_cnt = tx_cnt = 10000;
 		while (tx_cnt || rx_cnt) {
 
@@ -1316,7 +1277,7 @@ static void run_end_to_end_msg_test(void)
 				tx_cnt--;
 			}
 
-			/* wait for reply */
+			/* wait for reply msg or room */
 			rc = wait(chan, &uevt, 1000);
 			EXPECT_EQ (1, rc, "waiting for reply");
 			EXPECT_EQ (chan, uevt.handle, "wait on channel");
@@ -1340,11 +1301,14 @@ static void run_end_to_end_msg_test(void)
 
 				rx_cnt--;
 			}
+
+			if (!_all_ok)
+				break;
 		}
 
 abort_test:
-		EXPECT_EQ (tx_cnt, 0, "tx_cnt");
-		EXPECT_EQ (rx_cnt, 0, "rx_cnt");
+		EXPECT_EQ (0, tx_cnt, "tx_cnt");
+		EXPECT_EQ (0, rx_cnt, "rx_cnt");
 
 		rc = close(chan);
 		EXPECT_EQ (NO_ERROR, rc, "close channel");

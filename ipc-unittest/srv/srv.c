@@ -15,6 +15,7 @@
  */
 
 #include <err.h>
+#include <list.h>
 #include <assert.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -29,105 +30,295 @@
 
 typedef void (*event_handler_proc_t) (const uevent_t *ev);
 
+typedef struct tipc_event_handler {
+	event_handler_proc_t proc;
+	void *priv;
+} tipc_event_handler_t;
+
+typedef struct tipc_srv {
+	const char *name;
+	uint   msg_num;
+	size_t msg_size;
+	uint   port_flags;
+	size_t port_state_size;
+	size_t chan_state_size;
+	event_handler_proc_t port_handler;
+	event_handler_proc_t chan_handler;
+} tipc_srv_t;
+
+typedef struct tipc_srv_state {
+	const struct tipc_srv *service;
+	handle_t port;
+	void *priv;
+	tipc_event_handler_t handler;
+} tipc_srv_state_t;
+
+/* closer services */
 static void closer1_handle_port(const uevent_t *ev);
+
+typedef struct closer1_state {
+	uint conn_cnt;
+} closer1_state_t;
+
 static void closer2_handle_port(const uevent_t *ev);
+
+typedef struct closer2_state {
+	uint conn_cnt;
+} closer2_state_t;
+
 static void closer3_handle_port(const uevent_t *ev);
+
+typedef struct closer3_state {
+	handle_t chans[4];
+	uint chan_cnt;
+} closer3_state_t;
+
+/* connect service */
 static void connect_handle_port(const uevent_t *ev);
+
+/* datasync service */
 static void datasink_handle_port(const uevent_t *ev);
-static void echo_handle_port(const uevent_t *ev);
-static void uuid_handle_port(const uevent_t *ev);
-
-static bool stopped = false;
-static handle_t closer1_port  = INVALID_IPC_HANDLE;
-static handle_t closer2_port  = INVALID_IPC_HANDLE;
-static handle_t closer3_port  = INVALID_IPC_HANDLE;
-static handle_t connect_port  = INVALID_IPC_HANDLE;
-static handle_t datasink_port = INVALID_IPC_HANDLE;
-static handle_t echo_port     = INVALID_IPC_HANDLE;
-static handle_t uuid_port     = INVALID_IPC_HANDLE;
-static handle_t ta_only_port  = INVALID_IPC_HANDLE;
-static handle_t ns_only_port  = INVALID_IPC_HANDLE;
-
-static void uuid_handle_chan(const uevent_t *ev);
-static void echo_handle_chan(const uevent_t *ev);
 static void datasink_handle_chan(const uevent_t *ev);
 
+/* datasink service has no per channel state so we can
+ * just attach handler struct directly to channel handle
+ */
+static struct tipc_event_handler _datasink_chan_handler = {
+	.proc = datasink_handle_chan,
+	.priv = NULL,
+};
+
+/* echo service */
+static void echo_handle_port(const uevent_t *ev);
+static void echo_handle_chan(const uevent_t *ev);
+
+typedef struct echo_chan_state {
+	struct tipc_event_handler handler;
+	uint msg_max_num;
+	uint msg_cnt;
+	uint msg_next_r;
+	uint msg_next_w;
+	struct ipc_msg_info msg_queue[0];
+} echo_chan_state_t;
+
+/* uuid service */
+static void uuid_handle_port(const uevent_t *ev);
+
+/* Other globals */
+static bool stopped = false;
+
+/************************************************************************/
 
 #define IPC_PORT_ALLOW_ALL  (  IPC_PORT_ALLOW_NS_CONNECT \
                              | IPC_PORT_ALLOW_TA_CONNECT \
                             )
 
+#define SRV_NAME(name)   SRV_PATH_BASE ".srv." name
+
+
+static const struct tipc_srv _services[] =
+{
+	{
+		.name = SRV_NAME("closer1"),
+		.msg_num = 2,
+		.msg_size = 64,
+		.port_flags = IPC_PORT_ALLOW_ALL,
+		.port_handler = closer1_handle_port,
+		.port_state_size = sizeof(struct closer1_state),
+		.chan_handler = NULL,
+	},
+	{
+		.name = SRV_NAME("closer2"),
+		.msg_num = 2,
+		.msg_size = 64,
+		.port_flags = IPC_PORT_ALLOW_ALL,
+		.port_handler = closer2_handle_port,
+		.port_state_size = sizeof(struct closer2_state),
+		.chan_handler = NULL,
+	},
+	{
+		.name = SRV_NAME("closer3"),
+		.msg_num = 2,
+		.msg_size = 64,
+		.port_flags = IPC_PORT_ALLOW_ALL,
+		.port_handler = closer3_handle_port,
+		.port_state_size = sizeof(struct closer3_state),
+		.chan_handler = NULL,
+	},
+	{
+		.name = SRV_NAME("connect"),
+		.msg_num = 2,
+		.msg_size = 64,
+		.port_flags = IPC_PORT_ALLOW_TA_CONNECT,
+		.port_handler = connect_handle_port,
+		.chan_handler = NULL,
+	},
+	/* datasink services */
+	{
+		.name = SRV_NAME("datasink"),
+		.msg_num = 2,
+		.msg_size = 64,
+		.port_flags = IPC_PORT_ALLOW_ALL,
+		.port_handler = datasink_handle_port,
+		.chan_handler = NULL,
+	},
+	{
+		.name = SRV_NAME("ns_only"),
+		.msg_num = 8,
+		.msg_size = 64,
+		.port_flags = IPC_PORT_ALLOW_NS_CONNECT,
+		.port_handler = datasink_handle_port,
+		.chan_handler = NULL,
+	},
+	{
+		.name = SRV_NAME("ta_only"),
+		.msg_num = 8,
+		.msg_size = 64,
+		.port_flags = IPC_PORT_ALLOW_TA_CONNECT,
+		.port_handler = datasink_handle_port,
+		.chan_handler = NULL,
+	},
+	/* echo */
+	{
+		.name = SRV_NAME("echo"),
+		.msg_num = 8,
+		.msg_size = MAX_PORT_BUF_SIZE,
+		.port_flags = IPC_PORT_ALLOW_ALL,
+		.port_handler = echo_handle_port,
+		.chan_handler = echo_handle_chan,
+	},
+	/* uuid  test */
+	{
+		.name = SRV_NAME("uuid"),
+		.msg_num = 2,
+		.msg_size = 64,
+		.port_flags = IPC_PORT_ALLOW_ALL,
+		.port_handler = uuid_handle_port,
+		.chan_handler = NULL,
+	},
+};
+
+static struct tipc_srv_state _srv_states[countof(_services)] = {
+	[0 ... (countof(_services) - 1)] = {
+		.port = INVALID_IPC_HANDLE,
+	},
+};
+
 /************************************************************************/
 
-/*
- * close specified port
- */
-static void _close_port(handle_t port)
+static struct tipc_srv_state *get_srv_state(const uevent_t *ev)
 {
-	if (port == INVALID_IPC_HANDLE)
-		return;
-
-	int rc = close(port);
-	if (rc != NO_ERROR) {
-		TLOGI("Failed (%d) to close port %d\n", rc, port);
-	}
+	return containerof(ev->cookie, struct tipc_srv_state, handler);
 }
 
-/*
- * Close specified channel
- */
-static void _close_channel (handle_t chan)
+static void _destroy_service(struct tipc_srv_state *state)
 {
-	if (chan == INVALID_IPC_HANDLE)
+	if (!state) {
+		TLOGI("non-null state expected\n");
 		return;
-
-	int rc = close(chan);
-	if (rc != NO_ERROR) {
-		TLOGI("Failed (%d) to close chan %d\n", rc, chan);
 	}
+
+	/* free state if any */
+	if (state->priv) {
+		free(state->priv);
+		state->priv = NULL;
+	}
+
+	/* close port */
+	if (state->port != INVALID_IPC_HANDLE) {
+		int rc = close(state->port);
+		if (rc != NO_ERROR) {
+			TLOGI("Failed (%d) to close port %d\n",
+			       rc, state->port);
+		}
+		state->port = INVALID_IPC_HANDLE;
+	}
+
+	/* reset handler */
+	state->service = NULL;
+	state->handler.proc = NULL;
+	state->handler.priv = NULL;
 }
 
-/*
- *  Create port helper
- */
-static int _create_port(const char *name, uint buf_num, uint buf_sz,
-                        void *cookie, uint flags)
-{
-	handle_t port;
-	char path[MAX_PORT_PATH_LEN];
 
-	sprintf(path, "%s.srv.%s", SRV_PATH_BASE, name);
-	int rc = port_create(path, buf_num, buf_sz, flags);
+/*
+ *  Create service
+ */
+static int _create_service(const struct tipc_srv *srv,
+                           struct tipc_srv_state *state)
+{
+	if (!srv || !state) {
+		TLOGI("null service specified: %p: %p\n");
+		return ERR_INVALID_ARGS;
+	}
+
+	/* create port */
+	int rc = port_create(srv->name, srv->msg_num, srv->msg_size,
+			     srv->port_flags);
 	if (rc < 0) {
 		TLOGI("Failed (%d) to create port\n", rc);
-		return INVALID_IPC_HANDLE;
+		return rc;
 	}
-	port = (handle_t) rc;
 
-	rc = set_cookie (port, cookie);
-	if (rc << 0) {
-		TLOGI("Failed (%d) to set cookie on port %d\n", rc, port);
+	/* setup port state  */
+	state->port = (handle_t)rc;
+	state->handler.proc = srv->port_handler;
+	state->handler.priv = state;
+	state->service = srv;
+	state->priv = NULL;
+
+	if (srv->port_state_size) {
+		/* allocate port state */
+		state->priv = calloc(1, srv->port_state_size);
+		if (!state->priv) {
+			rc = ERR_NO_MEMORY;
+			goto err_calloc;
+		}
 	}
-	return port;
+
+	/* attach handler to port handle */
+	rc = set_cookie(state->port, &state->handler);
+	if (rc < 0) {
+		TLOGI("Failed (%d) to set cookie on port %d\n",
+		      rc, state->port);
+		goto err_set_cookie;
+	}
+
+	return NO_ERROR;
+
+err_calloc:
+err_set_cookie:
+	_destroy_service(state);
+	return rc;
+}
+
+
+/*
+ *  Restart specified service
+ */
+static int restart_service(struct tipc_srv_state *state)
+{
+	if (!state) {
+		TLOGI("non-null state expected\n");
+		return ERR_INVALID_ARGS;
+	}
+
+	const struct tipc_srv *srv = state->service;
+	_destroy_service(state);
+	return _create_service(srv, state);
 }
 
 /*
- *  Free resources allocated by all services
+ *  Kill all servoces
  */
 static void kill_services(void)
 {
 	TLOGI ("Terminating unittest services\n");
 
 	/* close any opened ports */
-	_close_port(closer1_port);
-	_close_port(closer2_port);
-	_close_port(closer3_port);
-	_close_port(connect_port);
-	_close_port(datasink_port);
-	_close_port(echo_port);
-	_close_port(uuid_port);
-	_close_port(ns_only_port);
-	_close_port(ta_only_port);
+	for (uint i = 0; i < countof(_services); i++) {
+		_destroy_service(&_srv_states[i]);
+	}
 }
 
 /*
@@ -135,64 +326,39 @@ static void kill_services(void)
  */
 static int init_services(void)
 {
-	int rc;
 	TLOGI ("Init unittest services!!!\n");
 
-	rc = _create_port("closer1", 2, 64, closer1_handle_port,
-	                  IPC_PORT_ALLOW_ALL);
-	if (rc < 0)
-		return -1;
-	closer1_port = (handle_t) rc;
-
-	rc = _create_port("closer2", 2, 64, closer2_handle_port,
-	                  IPC_PORT_ALLOW_ALL);
-	if (rc < 0)
-		return -1;
-	closer2_port = (handle_t) rc;
-
-	rc = _create_port("closer3", 2, 64, closer3_handle_port,
-	                  IPC_PORT_ALLOW_ALL);
-	if (rc < 0)
-		return -1;
-	closer3_port = (handle_t) rc;
-
-	rc = _create_port("connect", 2, 64, connect_handle_port,
-	                  IPC_PORT_ALLOW_TA_CONNECT);
-	if (rc < 0)
-		return -1;
-	connect_port = (handle_t) rc;
-
-	rc = _create_port("datasink", 2, 64, datasink_handle_port,
-	                  IPC_PORT_ALLOW_ALL);
-	if (rc < 0)
-		return -1;
-	datasink_port = (handle_t) rc;
-
-	rc = _create_port("echo", 8, 4096, echo_handle_port,
-	                  IPC_PORT_ALLOW_ALL);
-	if (rc < 0)
-		return -1;
-	echo_port = (handle_t) rc;
-
-	rc = _create_port("uuid", 2, 64, uuid_handle_port,
-	                  IPC_PORT_ALLOW_ALL);
-	if (rc < 0)
-		return -1;
-	uuid_port = (handle_t) rc;
-
-	rc = _create_port("ns_only", 8, 64, datasink_handle_port,
-	                  IPC_PORT_ALLOW_NS_CONNECT);
-	if (rc < 0)
-		return -1;
-	ns_only_port = (handle_t) rc;
-
-	rc = _create_port("ta_only", 8, 64, datasink_handle_port,
-	                  IPC_PORT_ALLOW_TA_CONNECT);
-	if (rc < 0)
-		return -1;
-	ta_only_port = (handle_t) rc;
+	for (uint i = 0; i < countof(_services); i++) {
+		int rc = _create_service(&_services[i], &_srv_states[i]);
+		if (rc < 0) {
+			TLOGI("Failed (%d) to create service %s\n",
+			      rc, _services[i].name);
+			return rc;
+		}
+	}
 
 	return 0;
+}
+
+/*
+ *  Handle common port errors
+ */
+static bool handle_port_errors(const uevent_t *ev)
+{
+	if ((ev->event & IPC_HANDLE_POLL_ERROR) ||
+	    (ev->event & IPC_HANDLE_POLL_HUP) ||
+	    (ev->event & IPC_HANDLE_POLL_MSG) ||
+	    (ev->event & IPC_HANDLE_POLL_SEND_UNBLOCKED)) {
+		/* should never happen with port handles */
+		TLOGI("error event (0x%x) for port (%d)\n",
+		       ev->event, ev->handle);
+
+		/* recreate service */
+		restart_service(get_srv_state(ev));
+		return true;
+	}
+
+	return false;
 }
 
 /****************************** connect test service *********************/
@@ -201,21 +367,8 @@ static void connect_handle_port(const uevent_t *ev)
 {
 	uuid_t peer_uuid;
 
-	if ((ev->event & IPC_HANDLE_POLL_ERROR) ||
-	    (ev->event & IPC_HANDLE_POLL_HUP) ||
-	    (ev->event & IPC_HANDLE_POLL_MSG)) {
-		TLOGI("error event (0x%x) for port (%d)\n",
-		       ev->event, ev->handle);
-
-		/* close port */
-		close (ev->handle);
-
-		/* and recreate it */
-		connect_port = _create_port("connect", 2, 64,
-		                             connect_handle_port,
-		                             IPC_PORT_ALLOW_TA_CONNECT);
+	if (handle_port_errors(ev))
 		return;
-	}
 
 	if (ev->event & IPC_HANDLE_POLL_READY) {
 		char path[MAX_PORT_PATH_LEN];
@@ -241,26 +394,15 @@ static void connect_handle_port(const uevent_t *ev)
 
 static void closer1_handle_port(const uevent_t *ev)
 {
-	static uint _conn_cnt = 0;
 	uuid_t peer_uuid;
+	struct closer1_state *st = get_srv_state(ev)->priv;
 
-	if ((ev->event & IPC_HANDLE_POLL_ERROR) ||
-	    (ev->event & IPC_HANDLE_POLL_HUP) ||
-	    (ev->event & IPC_HANDLE_POLL_MSG)) {
-		TLOGI("error event (0x%x) for port (%d)\n",
-		       ev->event, ev->handle);
-		/* close port */
-		close (ev->handle);
-		/* and recreate it */
-		closer1_port = _create_port("closer1", 2, 64,
-		                             closer1_handle_port,
-		                             IPC_PORT_ALLOW_ALL);
+	if (handle_port_errors(ev))
 		return;
-	}
 
 	if (ev->event & IPC_HANDLE_POLL_READY) {
 		/* new connection request, bump counter */
-		_conn_cnt++;
+		st->conn_cnt++;
 
 		/* accept it */
 		int rc = accept(ev->handle, &peer_uuid);
@@ -268,113 +410,80 @@ static void closer1_handle_port(const uevent_t *ev)
 			TLOGI("accept failed (%d)\n", rc);
 			return;
 		}
-		if (_conn_cnt & 1) {
+		handle_t chan = (handle_t) rc;
+
+		if (st->conn_cnt & 1) {
 			/* sleep a bit */
 			nanosleep (0, 0, 100 * MSEC);
 		}
 		/* and close it */
-		_close_channel((handle_t) rc);
+		rc = close(chan);
+		if (rc != NO_ERROR) {
+			TLOGI("Failed (%d) to close chan %d\n", rc, chan);
+		}
 	}
 }
 
 static void closer2_handle_port(const uevent_t *ev)
 {
-	static uint _conn_cnt = 0;
+	struct closer2_state *st = get_srv_state(ev)->priv;
 
-	if ((ev->event & IPC_HANDLE_POLL_ERROR) ||
-	    (ev->event & IPC_HANDLE_POLL_HUP) ||
-	    (ev->event & IPC_HANDLE_POLL_MSG)) {
-		TLOGI("error event (0x%x) for port (%d)\n",
-		       ev->event, ev->handle);
-		/* close port */
-		close (ev->handle);
-		/* and recreate it */
-		closer2_port = _create_port("closer2", 2, 64,
-		                             closer2_handle_port,
-		                             IPC_PORT_ALLOW_ALL);
+	if (handle_port_errors(ev))
 		return;
-	}
 
 	if (ev->event & IPC_HANDLE_POLL_READY) {
 		/* new connection request, bump counter */
-		_conn_cnt++;
-
-		if (_conn_cnt & 1) {
+		st->conn_cnt++;
+		if (st->conn_cnt & 1) {
 			/* sleep a bit */
 			nanosleep (0, 0, 100 * MSEC);
 		}
-		/* then close the port without accepting any connections */
-		_close_port(closer2_port);
-		/* and recreate port again */
-		closer2_port = _create_port ("closer2", 2, 64,
-		                              closer2_handle_port,
-		                              IPC_PORT_ALLOW_ALL);
-		return;
+
+		/*
+		 * then close the port without accepting any connections
+		 * and restart it again
+		 */
+		restart_service(get_srv_state(ev));
 	}
 }
 
 static void closer3_handle_port(const uevent_t *ev)
 {
-	static uint _chan_cnt = 0;
-	static handle_t _chans[4];
 	uuid_t peer_uuid;
+	struct closer3_state *st = get_srv_state(ev)->priv;
 
-	if ((ev->event & IPC_HANDLE_POLL_ERROR) ||
-	    (ev->event & IPC_HANDLE_POLL_HUP) ||
-	    (ev->event & IPC_HANDLE_POLL_MSG)) {
-		/* log error */
-		TLOGI("error event (0x%x) for port (%d)\n",
-		       ev->event, ev->handle);
-
-		/* close all channels */
-		for (uint i = 0; i < _chan_cnt; i++) {
-			close(_chans[i]);
-			_chans[i] = INVALID_IPC_HANDLE;
-		}
-		_chan_cnt = 0;
-
-		/* close port */
-		close (ev->handle);
-
-		/* and recreate it */
-		closer3_port = _create_port("closer3", 2, 64,
-		                             closer3_handle_port,
-		                             IPC_PORT_ALLOW_ALL);
+	if (handle_port_errors(ev))
 		return;
-	}
 
 	if (ev->event & IPC_HANDLE_POLL_READY) {
-
 		/* accept connection */
 		int rc = accept(ev->handle, &peer_uuid);
 		if (rc < 0) {
 			TLOGI("accept failed (%d)\n", rc);
 			return;
 		}
-
 		/* add it to connection pool */
-		_chans[_chan_cnt++] = (handle_t) rc;
+		st->chans[st->chan_cnt++] = (handle_t) rc;
 
-		set_cookie((handle_t) rc, datasink_handle_chan);
+		/* attach datasink service handler just in case */
+		set_cookie((handle_t)rc, &_datasink_chan_handler);
 
 		/* when max number of connection reached */
-		if (_chan_cnt == countof(_chans)) {
+		if (st->chan_cnt == countof(st->chans)) {
 			/* wait a bit */
 			nanosleep (0, 0, 100 * MSEC);
 
-			/* close them all */
-			for (uint i = 0; i < countof(_chans); i++ ) {
-				_close_channel(_chans[i]);
-				_chans[i] = INVALID_IPC_HANDLE;
-
-			}
-			_chan_cnt = 0;
+			/* and close them all */
+			for (uint i = 0; i < st->chan_cnt; i++ )
+				close(st->chans[i]);
+			st->chan_cnt = 0;
 		}
 		return;
 	}
 }
 
 /****************************** datasync service **************************/
+
 
 static int datasink_handle_msg(const uevent_t *ev)
 {
@@ -411,24 +520,25 @@ static int datasink_handle_msg(const uevent_t *ev)
  */
 static void datasink_handle_chan(const uevent_t *ev)
 {
-	if (ev->event & IPC_HANDLE_POLL_ERROR) {
+	if ((ev->event & IPC_HANDLE_POLL_ERROR) ||
+	    (ev->event & IPC_HANDLE_POLL_SEND_UNBLOCKED)) {
 		/* close it as it is in an error state */
 		TLOGI("error event (0x%x) for chan (%d)\n",
 		       ev->event, ev->handle);
-		close (ev->handle);
+		close(ev->handle);
 		return;
 	}
 
 	if (ev->event & IPC_HANDLE_POLL_MSG) {
 		if (datasink_handle_msg(ev) != 0) {
-			close (ev->handle);
+			close(ev->handle);
 			return;
 		}
 	}
 
 	if (ev->event & IPC_HANDLE_POLL_HUP) {
 		/* closed by peer */
-		close (ev->handle);
+		close(ev->handle);
 		return;
 	}
 }
@@ -440,21 +550,10 @@ static void datasink_handle_port(const uevent_t *ev)
 {
 	uuid_t peer_uuid;
 
-	if ((ev->event & IPC_HANDLE_POLL_ERROR) ||
-	    (ev->event & IPC_HANDLE_POLL_HUP) ||
-	    (ev->event & IPC_HANDLE_POLL_MSG)) {
-		/* log error */
-		TLOGI("error event (0x%x) for port (%d)\n",
-		       ev->event, ev->handle);
-
-		/* close port */
-		close (ev->handle);
+	if (handle_port_errors(ev))
 		return;
-	}
 
 	if (ev->event & IPC_HANDLE_POLL_READY) {
-		handle_t chan;
-
 		/* incomming connection: accept it */
 		int rc = accept(ev->handle, &peer_uuid);
 		if (rc < 0) {
@@ -462,9 +561,9 @@ static void datasink_handle_port(const uevent_t *ev)
 			       rc, ev->handle);
 			return;
 		}
-		chan = (handle_t) rc;
 
-		rc = set_cookie(chan, datasink_handle_chan);
+		handle_t chan = (handle_t) rc;
+		rc = set_cookie(chan, &_datasink_chan_handler);
 		if (rc) {
 			TLOGI("failed (%d) to set_cookie on chan %d\n",
 			       rc, chan);
@@ -474,27 +573,18 @@ static void datasink_handle_port(const uevent_t *ev)
 
 /******************************   echo service    **************************/
 
-static uint8_t echo_msg_buf[4096];
+static uint8_t echo_msg_buf[MAX_PORT_BUF_SIZE];
 
-static int _echo_handle_message(const uevent_t *ev, int delay)
+static int _echo_handle_msg(const uevent_t *ev, int delay)
 {
 	int rc;
-	ipc_msg_info_t inf;
-	ipc_msg_t      msg;
-	iovec_t        iov;
+	iovec_t iov;
+	ipc_msg_t msg;
+	echo_chan_state_t *st = containerof(ev->cookie, echo_chan_state_t, handler);
 
-	/* for all messages */
-	for (;;) {
-		/* init message structure */
-		iov.base = echo_msg_buf;
-		iov.len  = sizeof(echo_msg_buf);
-		msg.num_iov = 1;
-		msg.iov     = &iov;
-		msg.num_handles = 0;
-		msg.handles  = NULL;
-
-		/* get message */
-		rc = get_msg(ev->handle, &inf);
+	/* get all messages */
+	while (st->msg_cnt != st->msg_max_num) {
+		rc = get_msg(ev->handle, &st->msg_queue[st->msg_next_w]);
 		if (rc == ERR_NO_MSG)
 			break; /* no new messages */
 
@@ -504,71 +594,101 @@ static int _echo_handle_message(const uevent_t *ev, int delay)
 			return rc;
 		}
 
-		/* read content */
-		rc = read_msg(ev->handle, inf.id, 0, &msg);
+		st->msg_cnt++;
+		st->msg_next_w++;
+		if (st->msg_next_w == st->msg_max_num)
+			st->msg_next_w = 0;
+	}
+
+	/* handle all messages in queue */
+	while (st->msg_cnt) {
+		/* init message structure */
+		iov.base = echo_msg_buf;
+		iov.len  = sizeof(echo_msg_buf);
+		msg.num_iov = 1;
+		msg.iov     = &iov;
+		msg.num_handles = 0;
+		msg.handles  = NULL;
+
+		/* read msg content */
+		rc = read_msg(ev->handle, st->msg_queue[st->msg_next_r].id, 0, &msg);
 		if (rc < 0) {
 			TLOGI("failed (%d) to read_msg for chan (%d)\n",
 			      rc, ev->handle);
 			return rc;
 		}
 
-		/* update numvber of bytes recieved */
+		/* update number of bytes received */
 		iov.len = (size_t) rc;
 
-		/* retire original message */
-		rc = put_msg(ev->handle, inf.id);
-		if (rc != NO_ERROR) {
-			TLOGI("failed (%d) to put_msg for chan (%d)\n",
-			      rc, ev->handle);
-			return rc;
-		}
-
-		/* sleep a bit an send it back */
+		/* optionally sleep a bit an send it back */
 		if (delay) {
 			nanosleep (0, 0, 1000);
 		}
 
 		/* and send it back */
 		rc = send_msg(ev->handle, &msg);
+		if (rc == ERR_NOT_ENOUGH_BUFFER)
+			break;
+
 		if (rc < 0) {
 			TLOGI("failed (%d) to send_msg for chan (%d)\n",
 			      rc, ev->handle);
 			return rc;
 		}
+
+		/* retire original message */
+		rc = put_msg(ev->handle, st->msg_queue[st->msg_next_r].id);
+		if (rc != NO_ERROR) {
+			TLOGI("failed (%d) to put_msg for chan (%d)\n",
+			      rc, ev->handle);
+			return rc;
+		}
+
+		/* advance queue */
+		st->msg_cnt--;
+		st->msg_next_r++;
+		if (st->msg_next_r == st->msg_max_num)
+			st->msg_next_r = 0;
 	}
 	return NO_ERROR;
 }
 
 static int echo_handle_msg(const uevent_t *ev)
 {
-	return _echo_handle_message(ev, false);
+	return _echo_handle_msg(ev, false);
 }
 
 /*
- *  echo service channel handler
+ * echo service channel handler
  */
 static void echo_handle_chan(const uevent_t *ev)
 {
 	if (ev->event & IPC_HANDLE_POLL_ERROR) {
 		/* close it as it is in an error state */
 		TLOGI("error event (0x%x) for chan (%d)\n",
-		       ev->event, ev->handle);
-		close (ev->handle);
-		return;
+		      ev->event, ev->handle);
+		goto close_it;
 	}
 
-	if (ev->event & IPC_HANDLE_POLL_MSG) {
+	if (ev->event & (IPC_HANDLE_POLL_MSG |
+		         IPC_HANDLE_POLL_SEND_UNBLOCKED)) {
 		if (echo_handle_msg(ev) != 0) {
-			close (ev->handle);
-			return;
+			TLOGI("error event (0x%x) for chan (%d)\n",
+			      ev->event, ev->handle);
+			goto close_it;
 		}
 	}
 
 	if (ev->event & IPC_HANDLE_POLL_HUP) {
-		/* closed by peer */
-		close (ev->handle);
-		return;
+		goto close_it;
 	}
+
+	return;
+
+close_it:
+	free(ev->cookie);
+	close(ev->handle);
 }
 
 /*
@@ -577,17 +697,11 @@ static void echo_handle_chan(const uevent_t *ev)
 static void echo_handle_port(const uevent_t *ev)
 {
 	uuid_t peer_uuid;
+	struct echo_chan_state *chan_st;
+	const struct tipc_srv *srv = get_srv_state(ev)->service;
 
-	if ((ev->event & IPC_HANDLE_POLL_ERROR) ||
-	    (ev->event & IPC_HANDLE_POLL_HUP) ||
-	    (ev->event & IPC_HANDLE_POLL_MSG)) {
-		/* log error */
-		TLOGI("error event (0x%x) for port (%d)\n",
-		       ev->event, ev->handle);
-		/* close port */
-		close (ev->handle);
+	if (handle_port_errors(ev))
 		return;
-	}
 
 	if (ev->event & IPC_HANDLE_POLL_READY) {
 		handle_t chan;
@@ -601,10 +715,28 @@ static void echo_handle_port(const uevent_t *ev)
 		}
 		chan = (handle_t) rc;
 
-		rc = set_cookie(chan, echo_handle_chan);
+		chan_st = calloc(1, sizeof(struct echo_chan_state) +
+		                    sizeof(ipc_msg_info_t) * srv->msg_num);
+		if (!chan_st) {
+			TLOGI("failed (%d) to callocate state for chan %d\n",
+			       rc, chan);
+			close(chan);
+			return;
+		}
+
+		/* init state */
+		chan_st->msg_max_num  = srv->msg_num;
+		chan_st->handler.proc = srv->chan_handler;
+		chan_st->handler.priv = chan_st;
+
+		/* attach it to handle */
+		rc = set_cookie(chan, &chan_st->handler);
 		if (rc) {
 			TLOGI("failed (%d) to set_cookie on chan %d\n",
 			       rc, chan);
+			free(chan_st);
+			close(chan);
+			return;
 		}
 	}
 }
@@ -621,21 +753,8 @@ static void uuid_handle_port(const uevent_t *ev)
 	iovec_t   iov;
 	uuid_t peer_uuid;
 
-	if ((ev->event & IPC_HANDLE_POLL_ERROR) ||
-	    (ev->event & IPC_HANDLE_POLL_HUP) ||
-	    (ev->event & IPC_HANDLE_POLL_MSG)) {
-		/* log error */
-		TLOGI("error event (0x%x) for port (%d)\n",
-		       ev->event, ev->handle);
-
-		/* close port */
-		close (ev->handle);
-
-		/* and recreate it */
-		uuid_port = _create_port("uuid", 2, 64, uuid_handle_port,
-		                         IPC_PORT_ALLOW_ALL);
+	if (handle_port_errors(ev))
 		return;
-	}
 
 	if (ev->event & IPC_HANDLE_POLL_READY) {
 		handle_t chan;
@@ -663,7 +782,7 @@ static void uuid_handle_port(const uevent_t *ev)
 		}
 
 		/* and close channel */
-		close (chan);
+		close(chan);
 	}
 }
 
@@ -690,10 +809,10 @@ static void dispatch_event(const uevent_t *ev)
 	}
 
 	/* check if we have handler */
-	event_handler_proc_t handler = (event_handler_proc_t)ev->cookie;
-	if (handler) {
+	struct tipc_event_handler *handler = ev->cookie;
+	if (handler && handler->proc) {
 		/* invoke it */
-		handler(ev);
+		handler->proc(ev);
 		return;
 	}
 
@@ -732,7 +851,7 @@ int main(void)
 			continue;
 		}
 		if (rc > 0) { /* got an event */
-			dispatch_event (&event);
+			dispatch_event(&event);
 		}
 	}
 
