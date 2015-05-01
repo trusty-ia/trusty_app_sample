@@ -850,7 +850,7 @@ int main(void)
 			TLOGI("wait_any failed (%d)", rc);
 			continue;
 		}
-		if (rc > 0) { /* got an event */
+		if (rc == NO_ERROR) { /* got an event */
 			dispatch_event(&event);
 		}
 	}

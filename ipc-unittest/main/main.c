@@ -337,20 +337,20 @@ static void run_wait_on_port_test (void)
 	for (uint i = 2; i < MAX_USER_HANDLES; i++) {
 		/* wait with zero timeout */
 		rc = wait(ports[i], &event, 0);
-		EXPECT_EQ (NO_ERROR, rc, "zero timeout");
+		EXPECT_EQ (ERR_TIMED_OUT, rc, "zero timeout");
 
 		/* wait with non-zero timeout */
 		rc = wait(ports[i], &event, 100);
-		EXPECT_EQ (NO_ERROR, rc, "non-zero timeout");
+		EXPECT_EQ (ERR_TIMED_OUT, rc, "non-zero timeout");
 	}
 
 	/* wait on all ports with zero timeout */
 	rc = wait_any(&event, 0);
-	EXPECT_EQ (NO_ERROR, rc, "zero timeout");
+	EXPECT_EQ (ERR_TIMED_OUT, rc, "zero timeout");
 
 	/* wait on all ports with non-zero timeout*/
 	rc = wait_any(&event, 100);
-	EXPECT_EQ (NO_ERROR, rc, "non-zero timeout");
+	EXPECT_EQ (ERR_TIMED_OUT, rc, "non-zero timeout");
 
 	/* close them all */
 	for (uint i = 2; i < MAX_USER_HANDLES; i++) {
@@ -481,7 +481,7 @@ static void run_connect_close_by_peer_test(const char *test)
 		}
 
 		/* check if any channels are closed */
-		while ((rc = wait_any(&event, 0)) > 0) {
+		while ((rc = wait_any(&event, 0)) == NO_ERROR) {
 			EXPECT_EQ (IPC_HANDLE_POLL_HUP, event.event, test);
 			uint idx = (uint) event.cookie - COOKIE_BASE;
 			EXPECT_EQ (chans[idx], event.handle, test);
@@ -498,7 +498,7 @@ static void run_connect_close_by_peer_test(const char *test)
 	/* wait until all channels are closed */
 	while (chan_cnt) {
 		rc = wait_any(&event, 10000);
-		EXPECT_GE_ZERO (rc, test);
+		EXPECT_EQ (NO_ERROR, rc, test);
 		EXPECT_EQ (IPC_HANDLE_POLL_HUP, event.event, test);
 
 		uint idx = (uint) event.cookie - COOKIE_BASE;
@@ -559,11 +559,11 @@ static void run_connect_selfie_test (void)
 		uint exp_event = IPC_HANDLE_POLL_READY;
 
 		int rc = wait_any(&event, -1);
-		EXPECT_EQ (1, rc, "wait on port");
+		EXPECT_EQ (NO_ERROR, rc, "wait on port");
 		EXPECT_EQ (test_port, event.handle, "wait on port");
 		EXPECT_EQ (exp_event, event.event,  "wait on port");
 
-		if (rc == 1 && (event.event & IPC_HANDLE_POLL_READY)) {
+		if (rc == NO_ERROR && (event.event & IPC_HANDLE_POLL_READY)) {
 
 			/* we have pending connection, but it is already closed */
 			rc = accept (test_port, &peer_uuid);
@@ -724,7 +724,7 @@ static void run_accept_test (void)
 	for (uint i = 2; i < MAX_USER_HANDLES; i++ ) {
 
 		rc = wait_any(&event, 1000);
-		EXPECT_EQ (1, rc, "accept test");
+		EXPECT_EQ (NO_ERROR, rc, "accept test");
 		EXPECT_EQ (IPC_HANDLE_POLL_READY, event.event, "accept test");
 
 		/* check port cookie */
@@ -756,7 +756,7 @@ static void run_accept_test (void)
 	for (uint i = 2; i < MAX_USER_HANDLES-1; i++ ) {
 
 		rc = wait_any(&event, 3000);
-		EXPECT_EQ (1, rc, "accept test");
+		EXPECT_EQ (NO_ERROR, rc, "accept test");
 		EXPECT_EQ (IPC_HANDLE_POLL_READY, event.event, "accept test");
 
 		/* check port cookie */
@@ -931,7 +931,7 @@ static void run_send_msg_test(void)
 				uevent_t  uevt;
 				uint exp_event = IPC_HANDLE_POLL_SEND_UNBLOCKED;
 				rc = wait(chan, &uevt, 1000);
-				EXPECT_EQ (1, rc, "waiting for space");
+				EXPECT_EQ (NO_ERROR, rc, "waiting for space");
 				EXPECT_EQ (chan, uevt.handle, "waiting for space");
 				EXPECT_EQ (exp_event, uevt.event,  "waiting for space");
 			} else {
@@ -1136,7 +1136,7 @@ static void run_read_msg_negative_test(void)
 
 	/* and wait for response */
 	rc = wait(chan, &uevt, 1000);
-	EXPECT_EQ (1, rc, "waiting on echo response");
+	EXPECT_EQ (NO_ERROR, rc, "waiting on echo response");
 	EXPECT_EQ (chan, uevt.handle, "wait on channel");
 
 	rc = get_msg(chan, &inf);
@@ -1244,7 +1244,7 @@ static void run_end_to_end_msg_test(void)
 
 			/* wait for response */
 			rc = wait(chan, &uevt, 1000);
-			EXPECT_EQ (1, rc, "waiting on echo response");
+			EXPECT_EQ (NO_ERROR, rc, "waiting on echo response");
 			EXPECT_EQ (chan, uevt.handle, "wait on channel");
 
 			/* get a reply */
@@ -1279,7 +1279,7 @@ static void run_end_to_end_msg_test(void)
 
 			/* wait for reply msg or room */
 			rc = wait(chan, &uevt, 1000);
-			EXPECT_EQ (1, rc, "waiting for reply");
+			EXPECT_EQ (NO_ERROR, rc, "waiting for reply");
 			EXPECT_EQ (chan, uevt.handle, "wait on channel");
 
 			/* drain all messages */
@@ -1392,7 +1392,7 @@ int main(void)
 		int rc = wait_any(&uevt, -1);
 		TLOGI("got event (rc=%d): ev=%x handle=%d\n",
 		       rc, uevt.event, uevt.handle);
-		if (rc > 0) {
+		if (rc == NO_ERROR) {
 			if (uevt.event & IPC_HANDLE_POLL_READY) {
 				/* get connection request */
 				rc = accept(uevt.handle, &peer_uuid);
