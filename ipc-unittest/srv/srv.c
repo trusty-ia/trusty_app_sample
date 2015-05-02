@@ -363,6 +363,35 @@ static bool handle_port_errors(const uevent_t *ev)
 
 /****************************** connect test service *********************/
 
+/*
+ *  Local wrapper on top of async connect that provides
+ *  synchronos connect with timeout.
+ */
+int sync_connect(const char *path, uint timeout)
+{
+	int rc;
+	uevent_t evt;
+	handle_t chan;
+
+	rc = connect(path, IPC_CONNECT_ASYNC | IPC_CONNECT_WAIT_FOR_PORT);
+	if (rc >= 0) {
+		chan = (handle_t) rc;
+		rc = wait(chan, &evt, timeout);
+		if (rc == 0) {
+			rc = ERR_BAD_STATE;
+			if (evt.handle == chan) {
+				if (evt.event & IPC_HANDLE_POLL_READY)
+					return chan;
+
+				if (evt.event & IPC_HANDLE_POLL_HUP)
+					rc = ERR_CHANNEL_CLOSED;
+			}
+		}
+		close(chan);
+	}
+	return rc;
+}
+
 static void connect_handle_port(const uevent_t *ev)
 {
 	uuid_t peer_uuid;
@@ -384,7 +413,7 @@ static void connect_handle_port(const uevent_t *ev)
 		/* but then issue a series of connect requests */
 		for (uint i = 2; i < MAX_USER_HANDLES; i++) {
 			sprintf(path, "%s.port.accept%d", SRV_PATH_BASE, i);
-			rc = connect(path, 1000);
+			rc = sync_connect(path, 1000);
 			close(rc);
 		}
 	}

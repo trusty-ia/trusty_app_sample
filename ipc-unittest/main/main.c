@@ -122,6 +122,35 @@ static void fill_test_buf(uint8_t *buf, size_t cnt, uint8_t seed)
 	}
 }
 
+/*
+ *  Local wrapper on top of async connect that provides
+ *  synchronos connect with timeout.
+ */
+int sync_connect(const char *path, uint timeout)
+{
+	int rc;
+	uevent_t evt;
+	handle_t chan;
+
+	rc = connect(path, IPC_CONNECT_ASYNC | IPC_CONNECT_WAIT_FOR_PORT);
+	if (rc >= 0) {
+		chan = (handle_t) rc;
+		rc = wait(chan, &evt, timeout);
+		if (rc == 0) {
+			rc = ERR_BAD_STATE;
+			if (evt.handle == chan) {
+				if (evt.event & IPC_HANDLE_POLL_READY)
+					return chan;
+
+				if (evt.event & IPC_HANDLE_POLL_HUP)
+					rc = ERR_CHANNEL_CLOSED;
+			}
+		}
+		close(chan);
+	}
+	return rc;
+}
+
 
 /****************************************************************************/
 
@@ -377,19 +406,19 @@ static void run_connect_negative_test (void)
 	TEST_BEGIN(__func__);
 
 	/* try to connect to port with an empty name */
-	rc = connect("", connect_timeout);
+	rc = sync_connect("", connect_timeout);
 	EXPECT_EQ (ERR_INVALID_ARGS, rc, "empty path");
 
 	/* try to connect to non-existing port  */
 	sprintf(path, "%s.conn.%s", SRV_PATH_BASE, "blah-blah");
-	rc = connect(path, connect_timeout);
+	rc = connect(path, 0);
 	EXPECT_EQ (ERR_NOT_FOUND, rc, "non-existing path");
 
 	/* try to connect to port with very long name */
 	int len = sprintf(path, "%s.conn.", SRV_PATH_BASE);
 	for (uint i = len; i < sizeof(path); i++) path[i] = 'a';
 	path[sizeof(path)-1] = '\0';
-	rc = connect (path, connect_timeout);
+	rc = sync_connect (path, connect_timeout);
 	EXPECT_EQ (ERR_INVALID_ARGS, rc, "long path");
 
 	rc = close (rc);
@@ -413,7 +442,7 @@ static void run_connect_close_test(void)
 		/* do several iterations to make sure we are not
 		   not loosing handles */
 		for (uint i = 0; i < countof(chans); i++) {
-			rc = connect(path, 1000);
+			rc = sync_connect(path, 1000);
 			EXPECT_GE_ZERO (rc, "connect/close");
 			chans[i] = (handle_t) rc;
 		}
@@ -448,7 +477,7 @@ static void run_connect_close_by_peer_test(const char *test)
 		/* open new connection */
 		uint retry_cnt = 10;
 		while (retry_cnt) {
-			rc = connect(path, 2000);
+			rc = sync_connect(path, 2000);
 			if (rc == ERR_NOT_FOUND) {
 				/* wait a bit and retry */
 				--retry_cnt;
@@ -544,11 +573,11 @@ static void run_connect_selfie_test (void)
 		 */
 
 		/* with non-zero timeout  */
-		rc = connect (path, connect_timeout);
+		rc = sync_connect (path, connect_timeout);
 		EXPECT_EQ (ERR_TIMED_OUT, rc, "selfie");
 
 		/* with zero timeout */
-		rc = connect (path, 0);
+		rc = sync_connect (path, 0);
 		EXPECT_EQ (ERR_TIMED_OUT, rc, "selfie");
 
 		/* since we did not call wait on port yet we have
@@ -589,10 +618,10 @@ static void run_connect_selfie_test (void)
 		}
 
 		/* add couple connections back and destroy them along with port */
-		rc = connect (path, 0);
+		rc = sync_connect (path, 0);
 		EXPECT_EQ (ERR_TIMED_OUT, rc, "selfie");
 
-		rc = connect (path, 0);
+		rc = sync_connect (path, 0);
 		EXPECT_EQ (ERR_TIMED_OUT, rc, "selfie");
 
 		/* close selfie port  */
@@ -612,7 +641,7 @@ static void run_connect_access_test(void)
 
 	/* open connection to NS only accessible service */
 	sprintf(path, "%s.srv.%s", SRV_PATH_BASE,  "ns_only");
-	rc = connect(path, 1000);
+	rc = sync_connect(path, 1000);
 
 	/* It is expected to fail */
 	EXPECT_EQ(ERR_ACCESS_DENIED, rc, "connect to ns_only");
@@ -622,7 +651,7 @@ static void run_connect_access_test(void)
 
 	/* open connection to TA only accessible service */
 	sprintf(path, "%s.srv.%s", SRV_PATH_BASE,  "ta_only");
-	rc = connect(path, 1000);
+	rc = sync_connect(path, 1000);
 
 	/* it is expected to succeed */
 	EXPECT_GE_ZERO(rc, "connect to ta_only");
@@ -673,7 +702,7 @@ static void run_accept_negative_test(void)
 
 	/* connect to datasink service */
 	sprintf(path, "%s.srv.%s", SRV_PATH_BASE, "datasink");
-	rc = connect(path, 1000);
+	rc = sync_connect(path, 1000);
 	EXPECT_GE_ZERO (rc, "connect to datasink");
 	chan = (handle_t) rc;
 
@@ -717,7 +746,7 @@ static void run_accept_test (void)
 
 	/* poke connect service to initiate connections to us */
 	sprintf(path, "%s.srv.%s", SRV_PATH_BASE, "connect");
-	rc = connect (path, 1000);
+	rc = sync_connect (path, 1000);
 	close(rc);
 
 	/* handle incoming connections */
@@ -749,7 +778,7 @@ static void run_accept_test (void)
 
 	/* poke connect service to initiate connections to us */
 	sprintf(path, "%s.srv.%s", SRV_PATH_BASE, "connect");
-	rc = connect (path, 1000);
+	rc = sync_connect (path, 1000);
 	close(rc);
 
 	/* handle incoming connections */
@@ -825,7 +854,7 @@ static void run_get_msg_negative_test(void)
 
 	/* call get_msg on channel that do not have any pending messages */
 	sprintf(path, "%s.srv.%s", SRV_PATH_BASE,  "datasink");
-	rc = connect(path, 1000);
+	rc = sync_connect(path, 1000);
 	EXPECT_GE_ZERO (rc, "connect to datasink");
 	chan = (handle_t) rc;
 
@@ -877,7 +906,7 @@ static void run_put_msg_negative_test(void)
 
 	/* call put_msg on channel that do not have any pending messages */
 	sprintf(path, "%s.srv.%s", SRV_PATH_BASE,  "datasink");
-	rc = connect(path, 1000);
+	rc = sync_connect(path, 1000);
 	EXPECT_GE_ZERO (rc, "connect to datasink");
 	chan = (handle_t) rc;
 
@@ -920,7 +949,7 @@ static void run_send_msg_test(void)
 
 	/* open connection to datasink service */
 	sprintf(path, "%s.srv.%s", SRV_PATH_BASE,  "datasink");
-	rc = connect(path, 1000);
+	rc = sync_connect(path, 1000);
 	EXPECT_GE_ZERO (rc, "connect to datasink");
 
 	if (rc >= 0) {
@@ -1005,7 +1034,7 @@ static void run_send_msg_negative_test(void)
 
 	/* open connection to datasink service */
 	sprintf(path, "%s.srv.%s", SRV_PATH_BASE,  "datasink");
-	rc = connect(path, 1000);
+	rc = sync_connect(path, 1000);
 	EXPECT_GE_ZERO (rc, "connect to datasink");
 	chan = (handle_t) rc;
 
@@ -1107,7 +1136,7 @@ static void run_read_msg_negative_test(void)
 
 	/* open connection to echo service */
 	sprintf(path, "%s.srv.%s", SRV_PATH_BASE,  "echo");
-	rc = connect(path, 1000);
+	rc = sync_connect(path, 1000);
 	EXPECT_GE_ZERO (rc, "connect to datasink");
 	chan = (handle_t) rc;
 
@@ -1224,7 +1253,7 @@ static void run_end_to_end_msg_test(void)
 	memset (rx_buf, 0xaa, sizeof(rx_buf));
 
 	sprintf(path, "%s.srv.%s", SRV_PATH_BASE,  "echo");
-	rc = connect(path, 1000);
+	rc = sync_connect(path, 1000);
 	EXPECT_GE_ZERO (rc, "connect to echo");
 
 	if (rc >= 0) {
