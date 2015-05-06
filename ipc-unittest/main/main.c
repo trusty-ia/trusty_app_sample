@@ -378,7 +378,7 @@ static void run_connect_negative_test (void)
 
 	/* try to connect to port with an empty name */
 	rc = connect("", connect_timeout);
-	EXPECT_EQ (ERR_NOT_FOUND, rc, "empty path");
+	EXPECT_EQ (ERR_INVALID_ARGS, rc, "empty path");
 
 	/* try to connect to non-existing port  */
 	sprintf(path, "%s.conn.%s", SRV_PATH_BASE, "blah-blah");
