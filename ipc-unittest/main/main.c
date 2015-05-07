@@ -414,6 +414,11 @@ static void run_connect_negative_test (void)
 	rc = connect(path, 0);
 	EXPECT_EQ (ERR_NOT_FOUND, rc, "non-existing path");
 
+	/* try to connect to non-existing port  */
+	sprintf(path, "%s.conn.%s", SRV_PATH_BASE, "blah-blah");
+	rc = connect(path, IPC_CONNECT_ASYNC);
+	EXPECT_EQ (ERR_NOT_FOUND, rc, "non-existing path");
+
 	/* try to connect to port with very long name */
 	int len = sprintf(path, "%s.conn.", SRV_PATH_BASE);
 	for (uint i = len; i < sizeof(path); i++) path[i] = 'a';
@@ -542,6 +547,98 @@ static void run_connect_close_by_peer_test(const char *test)
 	}
 
 	EXPECT_EQ (0, chan_cnt, test);
+
+	TEST_END
+}
+
+static void run_async_connect_test (void)
+{
+	int rc;
+	handle_t chan;
+	uevent_t event;
+	uuid_t peer_uuid = {0};
+	char path[MAX_PORT_PATH_LEN];
+
+	TEST_BEGIN(__func__);
+
+	sprintf(path, "%s.main.%s", SRV_PATH_BASE, "async");
+
+	/* connect to non existing port synchronously without wait_for_port */
+	rc = connect (path, 0);
+	EXPECT_EQ (ERR_NOT_FOUND, rc, "async");
+	rc = close ((handle_t)rc);
+	EXPECT_EQ (ERR_BAD_HANDLE, rc, "async");
+
+	/* connect to non existing port asynchronously without wait_for_port */
+	rc = connect (path, IPC_CONNECT_ASYNC);
+	EXPECT_EQ (ERR_NOT_FOUND, rc, "async");
+	rc = close ((handle_t)rc);
+	EXPECT_EQ (ERR_BAD_HANDLE, rc, "async");
+
+	/* connect to non existing port asynchronously with wait_for_port */
+	rc = connect (path,  IPC_CONNECT_ASYNC | IPC_CONNECT_WAIT_FOR_PORT);
+	EXPECT_GE_ZERO(rc, "async");
+	if (rc >= 0) {
+		chan = (handle_t) rc;
+
+		/* wait on channel */
+		rc = wait(chan, &event, 1000);
+		EXPECT_EQ (ERR_TIMED_OUT, rc, "async");
+
+		/* and close it */
+		rc = close (chan);
+		EXPECT_EQ (NO_ERROR, rc, "async");
+	}
+
+	/* connect to non-existing port asyncronously with wait_for_port */
+	rc = connect (path,  IPC_CONNECT_ASYNC | IPC_CONNECT_WAIT_FOR_PORT);
+	EXPECT_GE_ZERO (rc, "async");
+	chan = (handle_t) rc;
+
+	if (rc >= 0) {
+		handle_t port;
+		uint32_t exp_event;
+
+		/* wait on channel for connect */
+		rc = wait(chan, &event, 100);
+		EXPECT_EQ (ERR_TIMED_OUT, rc, "async");
+
+		/* now create port */
+		rc = port_create(path, 1, 64, IPC_PORT_ALLOW_TA_CONNECT);
+		EXPECT_GE_ZERO (rc, "async");
+		if (rc >= 0) {
+			port = (handle_t) rc;
+
+			/* and wait for incomming connections */
+			exp_event = IPC_HANDLE_POLL_READY;
+			rc = wait(port, &event, 1000);
+			EXPECT_EQ (NO_ERROR, rc, "async");
+			EXPECT_EQ (exp_event, event.event, "async");
+
+			if (rc == NO_ERROR) {
+				handle_t srv_chan;
+
+				/* got one, accept it */
+				rc = accept(port, &peer_uuid);
+				EXPECT_GE_ZERO (rc, "async");
+				srv_chan = (handle_t) rc;
+
+				/* and close it */
+				close (srv_chan);
+
+				/* now wait on original chan:
+				 * there should be READY and HUP events
+				 */
+				exp_event = IPC_HANDLE_POLL_READY |
+					    IPC_HANDLE_POLL_HUP;
+				rc = wait(chan, &event, 1000);
+				EXPECT_EQ (NO_ERROR, rc, "async");
+				EXPECT_EQ (exp_event, event.event, "async");
+			}
+			close(port);
+		}
+		close(chan);
+	}
 
 	TEST_END
 }
@@ -1363,6 +1460,7 @@ static void run_all_tests (void)
 	/* positive tests */
 	run_port_create_test();
 	run_wait_on_port_test();
+	run_async_connect_test();
 	run_connect_close_test();
 	run_accept_test();
 	run_send_msg_test();
