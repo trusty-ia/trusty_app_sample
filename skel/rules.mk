@@ -1,4 +1,4 @@
-# Copyright (C) 2013 The Android Open Source Project
+# Copyright (C) 2013-2014 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,13 +16,13 @@
 LOCAL_DIR := $(GET_LOCAL_DIR)
 
 MODULE := $(LOCAL_DIR)
-MODULE_USER_TASK := true
 
 MODULE_SRCS += \
 	$(LOCAL_DIR)/skel_app.c \
 	$(LOCAL_DIR)/manifest.c
 
 MODULE_DEPS += \
+	app/trusty \
 	lib/libc-trusty \
 
 include make/module.mk
