@@ -21,25 +21,18 @@
 #include <string.h>
 #include <trusty_std.h>
 
-#include <trace.h>
-
-/* Expected limits: should be in sync with kernel settings */
-#define MAX_USER_HANDLES     64    /* max number of user handles */
-#define MAX_PORT_PATH_LEN    64    /* max length of port path name   */
-#define MAX_PORT_BUF_NUM     32    /* max number of per port buffers */
-#define MAX_PORT_BUF_SIZE  4096    /* max size of per port buffer    */
-
 #define LOG_TAG "ipc-unittest-main"
 
-#define TLOGI(fmt, ...) \
-    fprintf(stderr, "%s: %d: " fmt, LOG_TAG, __LINE__,  ## __VA_ARGS__)
+#include <app/ipc_unittest/common.h>
+#include <app/ipc_unittest/uuids.h>
 
-#define MSEC 1000000UL
-#define SRV_PATH_BASE   "com.android.ipc-unittest"
+#include <trace.h>
 
 /*  */
 static uint _tests_total  = 0; /* Number of conditions checked */
 static uint _tests_failed = 0; /* Number of conditions failed  */
+
+static const uuid_t srv_app_uuid = IPC_UNITTEST_SRV_APP_UUID;
 
 /*
  *   Begin and end test macro
@@ -527,7 +520,9 @@ static void run_connect_close_by_peer_test(const char *test)
 
 static void run_connect_selfie_test (void)
 {
-	int rc;
+	int rc, rc1;
+	uuid_t peer_uuid = {0};
+	uuid_t zero_uuid = {0};
 	char path[MAX_PORT_PATH_LEN];
 	lk_time_t connect_timeout = 1000;  // 1 sec
 
@@ -570,17 +565,26 @@ static void run_connect_selfie_test (void)
 		if (rc == 1 && (event.event & IPC_HANDLE_POLL_READY)) {
 
 			/* we have pending connection, but it is already closed */
-			rc = accept (test_port);
+			rc = accept (test_port, &peer_uuid);
 			EXPECT_EQ (ERR_CHANNEL_CLOSED, rc, "accept");
 
+			rc1 = memcmp(&peer_uuid, &zero_uuid, sizeof(zero_uuid));
+			EXPECT_EQ (0, rc1, "accept")
+
 			/* the second one is closed too */
-			rc = accept (test_port);
+			rc = accept (test_port, &peer_uuid);
 			EXPECT_EQ (ERR_CHANNEL_CLOSED, rc, "accept");
+
+			rc1 = memcmp(&peer_uuid, &zero_uuid, sizeof(zero_uuid));
+			EXPECT_EQ (0, rc1, "accept")
 
 			/* There should be no more pending connections so next
 			   accept should return ERR_NO_MSG */
-			rc = accept (test_port);
+			rc = accept (test_port, &peer_uuid);
 			EXPECT_EQ (ERR_NO_MSG, rc, "accept");
+
+			rc1 = memcmp(&peer_uuid, &zero_uuid, sizeof(zero_uuid));
+			EXPECT_EQ (0, rc1, "accept")
 		}
 
 		/* add couple connections back and destroy them along with port */
@@ -605,24 +609,35 @@ static void run_connect_selfie_test (void)
  */
 static void run_accept_negative_test(void)
 {
-	int  rc;
+	int  rc, rc1;
 	char path[MAX_PORT_PATH_LEN];
 	handle_t chan;
+	uuid_t peer_uuid = {0};
+	uuid_t zero_uuid = {0};
 
 	TEST_BEGIN(__func__);
 
 	/* accept on invalid (negative value) handle */
-	rc = accept(INVALID_IPC_HANDLE);
+	rc = accept(INVALID_IPC_HANDLE, &peer_uuid);
 	EXPECT_EQ (ERR_BAD_HANDLE, rc, "accept on invalid handle");
 
+	rc1 = memcmp(&peer_uuid, &zero_uuid, sizeof(zero_uuid));
+	EXPECT_EQ (0, rc1, "accept")
+
 	/* accept on an invalid (out of range (big positive)) handle */
-	rc = accept(MAX_USER_HANDLES);
+	rc = accept(MAX_USER_HANDLES, &peer_uuid);
 	EXPECT_EQ (ERR_BAD_HANDLE, rc, "accept on invalid handle");
+
+	rc1 = memcmp(&peer_uuid, &zero_uuid, sizeof(zero_uuid));
+	EXPECT_EQ (0, rc1, "accept")
 
 	/* accept on non-existing handle that is in valid range */
 	for (uint i = 2; i < MAX_USER_HANDLES; i++) {
-		rc = accept(i);
+		rc = accept(i, &peer_uuid);
 		EXPECT_EQ (ERR_NOT_FOUND, rc, "accept on invalid handle");
+
+		rc1 = memcmp(&peer_uuid, &zero_uuid, sizeof(zero_uuid));
+		EXPECT_EQ (0, rc1, "accept")
 	}
 
 	/* connect to datasink service */
@@ -632,8 +647,11 @@ static void run_accept_negative_test(void)
 	chan = (handle_t) rc;
 
 	/* call accept on channel handle which is an invalid operation */
-	rc = accept(chan);
+	rc = accept(chan, &peer_uuid);
 	EXPECT_EQ (ERR_INVALID_ARGS, rc, "accept on channel");
+
+	rc1 = memcmp(&peer_uuid, &zero_uuid, sizeof(zero_uuid));
+	EXPECT_EQ (0, rc1, "accept")
 
 	rc = close(chan);
 	EXPECT_EQ (NO_ERROR, rc, "close channnel")
@@ -643,10 +661,12 @@ static void run_accept_negative_test(void)
 
 static void run_accept_test (void)
 {
-	int  rc;
+	int  rc, rc1;
 	uevent_t event;
 	char path[MAX_PORT_PATH_LEN];
 	handle_t ports[MAX_USER_HANDLES];
+	uuid_t peer_uuid = {0};
+	uuid_t zero_uuid = {0};
 
 	TEST_BEGIN(__func__);
 
@@ -663,7 +683,7 @@ static void run_accept_test (void)
 		EXPECT_EQ (NO_ERROR, rc, "set cookie on port");
 	}
 
-	/* poke accept1 service to initiate connections to us */
+	/* poke connect service to initiate connections to us */
 	sprintf(path, "%s.srv.%s", SRV_PATH_BASE, "connect");
 	rc = connect (path, 1000);
 	close(rc);
@@ -681,8 +701,12 @@ static void run_accept_test (void)
 
 		/* accept connection - should fail because we do not
 		   have any room for handles */
-		rc = accept (event.handle);
+		rc = accept (event.handle, &peer_uuid);
 		EXPECT_EQ (ERR_NO_RESOURCES, rc, "accept test");
+		
+		/* check peer uuid */
+		rc1 = memcmp(&peer_uuid, &zero_uuid, sizeof(zero_uuid));
+		EXPECT_EQ (0, rc1, "accept test")
 	}
 
 	/* free 1 handle  so we have room and repeat test */
@@ -707,8 +731,12 @@ static void run_accept_test (void)
 		void *exp_cookie = (void *)(COOKIE_BASE + event.handle);
 		EXPECT_EQ (exp_cookie, event.cookie, "accept test");
 
-		rc = accept (event.handle);
+		rc = accept (event.handle, &peer_uuid);
 		EXPECT_EQ (2, rc, "accept test");
+
+		/* check peer uuid */
+		rc1 = memcmp(&peer_uuid, &srv_app_uuid, sizeof(srv_app_uuid));
+		EXPECT_EQ (0, rc1, "accept test")
 
 		rc = close (rc);
 		EXPECT_EQ (NO_ERROR, rc, "accept test");
@@ -1343,6 +1371,7 @@ int main(void)
 {
 	int rc;
 	char path[MAX_PORT_PATH_LEN];
+	uuid_t peer_uuid;
 
 	TLOGI ("Welcome to IPC unittest!!!\n");
 
@@ -1364,7 +1393,7 @@ int main(void)
 		if (rc > 0) {
 			if (uevt.event & IPC_HANDLE_POLL_READY) {
 				/* get connection request */
-				rc = accept(uevt.handle);
+				rc = accept(uevt.handle, &peer_uuid);
 				if (rc >= 0) {
 					/* then run unittest test */
 					run_all_tests();

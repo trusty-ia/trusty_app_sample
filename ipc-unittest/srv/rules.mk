@@ -1,4 +1,4 @@
-# Copyright (C) 2014 The Android Open Source Project
+# Copyright (C) 2014-2015 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,6 +16,9 @@
 LOCAL_DIR := $(GET_LOCAL_DIR)
 
 MODULE := $(LOCAL_DIR)
+
+MODULE_INCLUDES += \
+	$(LOCAL_DIR)/../include \
 
 MODULE_SRCS += \
 	$(LOCAL_DIR)/manifest.c \

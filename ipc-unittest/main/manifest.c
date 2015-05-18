@@ -18,11 +18,11 @@
 #include <stddef.h>
 #include <stdio.h>
 
+#include <app/ipc_unittest/uuids.h>
+
 trusty_app_manifest_t TRUSTY_APP_MANIFEST_ATTRS trusty_app_manifest =
 {
-	/* UUID : {766072e8-414e-48fc-9f8f-fb9a6f144124} */
-	{ 0x766072e8, 0x414e, 0x48fc,
-	  { 0x9f, 0x8f, 0xfb, 0x9a, 0x6f, 0x14, 0x41, 0x24 } },
+	.uuid = IPC_UNITTEST_MAIN_APP_UUID,
 
 	/* optional configuration options here */
 	{

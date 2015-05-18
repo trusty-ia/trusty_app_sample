@@ -22,19 +22,12 @@
 #include <string.h>
 #include <trusty_std.h>
 
-/* Expected limits: should be in sync with kernel settings */
-#define MAX_USER_HANDLES    64  /* max number of user handles */
-#define MAX_PORT_PATH_LEN   64  /* max length of port path name   */
-
 #define LOG_TAG "ipc-unittest-srv"
 
-#define TLOGI(fmt, ...) \
-    fprintf(stderr, "%s: " fmt, LOG_TAG, ## __VA_ARGS__)
+#include <app/ipc_unittest/common.h>
+#include <app/ipc_unittest/uuids.h>
 
 typedef void (*event_handler_proc_t) (const uevent_t *ev);
-
-#define MSEC 1000000UL
-#define SRV_PATH_BASE  "com.android.ipc-unittest"
 
 static void closer1_handle_port(const uevent_t *ev);
 static void closer2_handle_port(const uevent_t *ev);
@@ -42,6 +35,7 @@ static void closer3_handle_port(const uevent_t *ev);
 static void connect_handle_port(const uevent_t *ev);
 static void datasink_handle_port(const uevent_t *ev);
 static void echo_handle_port(const uevent_t *ev);
+static void uuid_handle_port(const uevent_t *ev);
 
 static bool stopped = false;
 static handle_t closer1_port  = INVALID_IPC_HANDLE;
@@ -50,8 +44,9 @@ static handle_t closer3_port  = INVALID_IPC_HANDLE;
 static handle_t connect_port  = INVALID_IPC_HANDLE;
 static handle_t datasink_port = INVALID_IPC_HANDLE;
 static handle_t echo_port     = INVALID_IPC_HANDLE;
+static handle_t uuid_port     = INVALID_IPC_HANDLE;
 
-
+static void uuid_handle_chan(const uevent_t *ev);
 static void echo_handle_chan(const uevent_t *ev);
 static void datasink_handle_chan(const uevent_t *ev);
 
@@ -123,6 +118,7 @@ static void kill_services(void)
 	_close_port(connect_port);
 	_close_port(datasink_port);
 	_close_port(echo_port);
+	_close_port(uuid_port);
 }
 
 /*
@@ -163,6 +159,11 @@ static int init_services(void)
 		return -1;
 	echo_port = (handle_t) rc;
 
+	rc = _create_port("uuid", 2, 64, uuid_handle_port);
+	if (rc < 0)
+		return -1;
+	uuid_port = (handle_t) rc;
+
 	return 0;
 }
 
@@ -170,6 +171,8 @@ static int init_services(void)
 
 static void connect_handle_port(const uevent_t *ev)
 {
+	uuid_t peer_uuid;
+
 	if ((ev->event & IPC_HANDLE_POLL_ERROR) ||
 	    (ev->event & IPC_HANDLE_POLL_HUP) ||
 	    (ev->event & IPC_HANDLE_POLL_MSG)) {
@@ -189,7 +192,7 @@ static void connect_handle_port(const uevent_t *ev)
 		char path[MAX_PORT_PATH_LEN];
 
 		/* accept incomming connection and close it */
-		int rc = accept(ev->handle);
+		int rc = accept(ev->handle, &peer_uuid);
 		if (rc < 0) {
 			TLOGI("accept failed (%d)\n", rc);
 			return;
@@ -210,6 +213,7 @@ static void connect_handle_port(const uevent_t *ev)
 static void closer1_handle_port(const uevent_t *ev)
 {
 	static uint _conn_cnt = 0;
+	uuid_t peer_uuid;
 
 	if ((ev->event & IPC_HANDLE_POLL_ERROR) ||
 	    (ev->event & IPC_HANDLE_POLL_HUP) ||
@@ -229,7 +233,7 @@ static void closer1_handle_port(const uevent_t *ev)
 		_conn_cnt++;
 
 		/* accept it */
-		int rc = accept(ev->handle);
+		int rc = accept(ev->handle, &peer_uuid);
 		if (rc < 0) {
 			TLOGI("accept failed (%d)\n", rc);
 			return;
@@ -281,6 +285,7 @@ static void closer3_handle_port(const uevent_t *ev)
 {
 	static uint _chan_cnt = 0;
 	static handle_t _chans[4];
+	uuid_t peer_uuid;
 
 	if ((ev->event & IPC_HANDLE_POLL_ERROR) ||
 	    (ev->event & IPC_HANDLE_POLL_HUP) ||
@@ -308,7 +313,7 @@ static void closer3_handle_port(const uevent_t *ev)
 	if (ev->event & IPC_HANDLE_POLL_READY) {
 
 		/* accept connection */
-		int rc = accept(ev->handle);
+		int rc = accept(ev->handle, &peer_uuid);
 		if (rc < 0) {
 			TLOGI("accept failed (%d)\n", rc);
 			return;
@@ -400,6 +405,8 @@ static void datasink_handle_chan(const uevent_t *ev)
  */
 static void datasink_handle_port(const uevent_t *ev)
 {
+	uuid_t peer_uuid;
+
 	if ((ev->event & IPC_HANDLE_POLL_ERROR) ||
 	    (ev->event & IPC_HANDLE_POLL_HUP) ||
 	    (ev->event & IPC_HANDLE_POLL_MSG)) {
@@ -407,7 +414,7 @@ static void datasink_handle_port(const uevent_t *ev)
 		TLOGI("error event (0x%x) for port (%d)\n",
 		       ev->event, ev->handle);
 
-		/* GMAR: need to kill channels */
+		/* TODO: need to kill channels */
 
 		/* close port */
 		close (ev->handle);
@@ -422,7 +429,7 @@ static void datasink_handle_port(const uevent_t *ev)
 		handle_t chan;
 
 		/* incomming connection: accept it */
-		int rc = accept(ev->handle);
+		int rc = accept(ev->handle, &peer_uuid);
 		if (rc < 0) {
 			TLOGI("failed (%d) to accept on port %d\n",
 			       rc, ev->handle);
@@ -542,13 +549,15 @@ static void echo_handle_chan(const uevent_t *ev)
  */
 static void echo_handle_port(const uevent_t *ev)
 {
+	uuid_t peer_uuid;
+
 	if ((ev->event & IPC_HANDLE_POLL_ERROR) ||
 	    (ev->event & IPC_HANDLE_POLL_HUP) ||
 	    (ev->event & IPC_HANDLE_POLL_MSG)) {
 		/* log error */
 		TLOGI("error event (0x%x) for port (%d)\n",
 		       ev->event, ev->handle);
-		/* GMAR: need to kill channels */
+		/* TODO: need to kill channels */
 
 		/* close port */
 		close (ev->handle);
@@ -563,7 +572,7 @@ static void echo_handle_port(const uevent_t *ev)
 		handle_t chan;
 
 		/* incomming connection: accept it */
-		int rc = accept(ev->handle);
+		int rc = accept(ev->handle, &peer_uuid);
 		if (rc < 0) {
 			TLOGI("failed (%d) to accept on port %d\n",
 			       rc, ev->handle);
@@ -576,6 +585,65 @@ static void echo_handle_port(const uevent_t *ev)
 			TLOGI("failed (%d) to set_cookie on chan %d\n",
 			       rc, chan);
 		}
+	}
+}
+
+
+/***************************************************************************/
+
+/*
+ *  uuid service port event handler
+ */
+static void uuid_handle_port(const uevent_t *ev)
+{
+	ipc_msg_t msg;
+	iovec_t   iov;
+	uuid_t peer_uuid;
+
+	if ((ev->event & IPC_HANDLE_POLL_ERROR) ||
+	    (ev->event & IPC_HANDLE_POLL_HUP) ||
+	    (ev->event & IPC_HANDLE_POLL_MSG)) {
+		/* log error */
+		TLOGI("error event (0x%x) for port (%d)\n",
+		       ev->event, ev->handle);
+
+		/* TODO: need to kill channels */
+
+		/* close port */
+		close (ev->handle);
+
+		/* and recreate it */
+		uuid_port = _create_port("uuid", 2, 64, uuid_handle_port);
+		return;
+	}
+
+	if (ev->event & IPC_HANDLE_POLL_READY) {
+		handle_t chan;
+
+		/* incomming connection: accept it */
+		int rc = accept(ev->handle, &peer_uuid);
+		if (rc < 0) {
+			TLOGI("failed (%d) to accept on port %d\n",
+			       rc, ev->handle);
+			return;
+		}
+		chan = (handle_t) rc;
+
+		/* send interface uuid */
+		iov.base = &peer_uuid;
+		iov.len  = sizeof(peer_uuid);
+		msg.num_iov = 1;
+		msg.iov     = &iov;
+		msg.num_handles = 0;
+		msg.handles  = NULL;
+		rc = send_msg(chan, &msg);
+		if (rc < 0) {
+			TLOGI("failed (%d) to send_msg for chan (%d)\n",
+			      rc, chan);
+		}
+
+		/* and close channel */
+		close (chan);
 	}
 }
 
