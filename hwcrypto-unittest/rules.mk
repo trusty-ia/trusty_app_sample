@@ -26,6 +26,7 @@ MODULE_DEPS += \
 	app/trusty \
 	lib/libc-trusty \
 	lib/hwkey \
+	lib/rng
 
 include make/module.mk
 

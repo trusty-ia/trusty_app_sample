@@ -34,6 +34,7 @@
 
 #include <trusty_unittest.h>
 #include <lib/hwkey/hwkey.h>
+#include <lib/rng/trusty_rng.h>
 
 #define LOG_TAG "hwcrypto_unittest"
 
@@ -233,8 +234,135 @@ static void run_hwkey_tests(void)
 }
 
 
-static void run_all_tests(void)
+/***********************   HWRNG  UNITTEST  *******************************************/
+
+static uint32_t _hist[256];
+static uint8_t  _rng_buf[1024];
+
+static void hwrng_update_hist(uint8_t *data, uint cnt)
 {
+	for (uint i = 0; i < cnt; i++) {
+		_hist[data[i]]++;
+	}
+}
+
+static void hwrng_show_data(const void *ptr, size_t len)
+{
+	addr_t address = (addr_t)ptr;
+	size_t count;
+	size_t i;
+
+	fprintf(stderr, "Dumping first hwrng request:\n");
+	for (count = 0 ; count < len; count += 16) {
+		for (i=0; i < MIN(len - count, 16); i++) {
+			fprintf(stderr, "0x%02hhx ", *(const uint8_t *)(address + i));
+		}
+		fprintf(stderr, "\n");
+		address += 16;
+	}
+}
+
+static void run_hwrng_show_data_test(void)
+{
+	int rc;
+
+	TEST_BEGIN(__func__);
+
+	rc = trusty_rng_hw_rand(_rng_buf, 32);
+	EXPECT_EQ (NO_ERROR, rc, "hwrng test");
+	if (rc == NO_ERROR) {
+		hwrng_show_data(_rng_buf, 32);
+	}
+
+	TEST_END
+}
+
+static void run_hwrng_var_rng_req_test(void)
+{
+	int rc;
+	uint i;
+	size_t req_cnt;
+
+	TEST_BEGIN(__func__);
+
+	/* Issue 100 hwrng requests of variable sizes */
+	for (i = 0; i < 100; i++ ) {
+		req_cnt = ((size_t)rand() % sizeof(_rng_buf)) + 1;
+		rc = trusty_rng_hw_rand(_rng_buf, req_cnt);
+		EXPECT_EQ (NO_ERROR, rc, "hwrng test");
+		if (rc != NO_ERROR) {
+			TLOGI("trusty_rng_hw_rand returned %d\n", rc);
+			continue;
+		}
+	}
+
+	TEST_END
+}
+
+static void run_hwrng_stats_test(void)
+{
+	int rc;
+	uint i;
+	size_t req_cnt;
+	uint32_t exp_cnt;
+	uint32_t cnt = 0;
+	uint32_t ave = 0;
+	uint32_t dev = 0;
+
+	TEST_BEGIN(__func__);
+
+	/* issue 100x256 bytes requests */
+	req_cnt = 256;
+	exp_cnt = 1000 * req_cnt;
+	memset(_hist, 0, sizeof(_hist));
+	for (i = 0; i < 1000; i++ ) {
+		rc = trusty_rng_hw_rand(_rng_buf, req_cnt);
+		EXPECT_EQ (NO_ERROR, rc, "hwrng test");
+		if (rc != NO_ERROR) {
+			TLOGI("trusty_rng_hw_rand returned %d\n", rc);
+			continue;
+		}
+		hwrng_update_hist(_rng_buf, req_cnt);
+	}
+
+	/* check hwrng stats */
+	for (i = 0; i < 256; i++)
+		cnt += _hist[i];
+	ave = cnt / 256;
+	EXPECT_EQ(exp_cnt, cnt, "hwrng ttl sample cnt");
+	EXPECT_EQ(1000, ave, "hwrng eve sample cnt");
+
+	/**
+	 * Ideally data should be uniformly distributed
+	 * Calculate average deviation from ideal model
+	 */
+	for (i = 0; i < 256; i++) {
+		int val = _hist[i] - ave;
+		if (val < 0)
+			val = -val;
+		dev += val;
+	}
+	dev /= 256;
+
+	/* Check if everage deviation is within 5% of ideal model
+	 * which is fairly arbitrary requirement. It could be useful
+	 * to alert is something terribly wrong with rng source.
+	 */
+	EXPECT_GT(50, dev, "average dev");
+
+	TEST_END
+}
+
+static void run_hwrng_tests(void)
+{
+	TLOGI("WELCOME TO HWRNG UNITTEST!\n");
+	run_hwrng_show_data_test();
+	run_hwrng_var_rng_req_test();
+	run_hwrng_stats_test();
+}
+
+static void run_all_tests(void) {
+	run_hwrng_tests();
 	run_hwkey_tests();
 }
 
