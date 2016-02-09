@@ -844,7 +844,8 @@ static void run_accept_test (void)
 	/* poke connect service to initiate connections to us */
 	sprintf(path, "%s.srv.%s", SRV_PATH_BASE, "connect");
 	rc = sync_connect (path, 1000);
-	close(rc);
+	if (rc >= 0)
+		close((handle_t)rc);
 
 	/* handle incoming connections */
 	for (uint i = 2; i < MAX_USER_HANDLES; i++ ) {
@@ -876,7 +877,8 @@ static void run_accept_test (void)
 	/* poke connect service to initiate connections to us */
 	sprintf(path, "%s.srv.%s", SRV_PATH_BASE, "connect");
 	rc = sync_connect (path, 1000);
-	close(rc);
+	if (rc >= 0)
+		close((handle_t)rc);
 
 	/* handle incoming connections */
 	for (uint i = 2; i < MAX_USER_HANDLES-1; i++ ) {

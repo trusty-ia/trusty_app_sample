@@ -404,11 +404,13 @@ static void connect_handle_port(const uevent_t *ev)
 
 		/* accept incomming connection and close it */
 		int rc = accept(ev->handle, &peer_uuid);
-		if (rc < 0) {
+		if (rc < 0 && rc != ERR_CHANNEL_CLOSED) {
 			TLOGI("accept failed (%d)\n", rc);
 			return;
 		}
-		close (rc);
+		if (rc >= 0) {
+			close ((handle_t)rc);
+		}
 
 		/* but then issue a series of connect requests */
 		for (uint i = 2; i < MAX_USER_HANDLES; i++) {
