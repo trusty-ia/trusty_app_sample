@@ -1945,6 +1945,38 @@ TEST_P(TransactCommitSetSize)
     ASSERT_EQ(0, rc);
     ASSERT_EQ((storage_off_t)exp_len/3, fsize);
 
+    // write data, increasing file size to exp_len (no commit)
+    rc = WritePattern(handle, 0, exp_len, blk, false);
+    ASSERT_EQ((int)exp_len, rc);
+
+    // check file size
+    rc = storage_get_file_size(handle, &fsize);
+    ASSERT_EQ(0, rc);
+    ASSERT_EQ((storage_off_t)exp_len, fsize);
+
+    // abort aux transaction
+    rc = storage_end_transaction(ss_aux, false);
+    ASSERT_EQ(0, rc);
+
+    // check file size from aux session
+    rc = storage_get_file_size(handle_aux, &fsize);
+    ASSERT_EQ(0, rc);
+    ASSERT_EQ((storage_off_t)exp_len/3, fsize);
+
+    // set file size without actually changing size, but ask to commit
+    rc = storage_set_file_size(handle, (storage_off_t)exp_len,
+                               STORAGE_OP_COMPLETE);
+    ASSERT_EQ(0, rc);
+
+    // abort aux transaction
+    rc = storage_end_transaction(ss_aux, false);
+    ASSERT_EQ(0, rc);
+
+    // check file size from aux session
+    rc = storage_get_file_size(handle_aux, &fsize);
+    ASSERT_EQ(0, rc);
+    ASSERT_EQ((storage_off_t)exp_len, fsize);
+
     // cleanup
     storage_close_file(handle);
     storage_close_file(handle_aux);
