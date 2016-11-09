@@ -26,7 +26,6 @@
 #define LOG_TAG "ipc-unittest-srv"
 
 #include <app/ipc_unittest/common.h>
-#include <app/ipc_unittest/uuids.h>
 
 typedef void (*event_handler_proc_t) (const uevent_t *ev);
 

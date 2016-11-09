@@ -24,7 +24,6 @@
 #define LOG_TAG "ipc-unittest-main"
 
 #include <app/ipc_unittest/common.h>
-#include <app/ipc_unittest/uuids.h>
 
 #include <trace.h>
 
