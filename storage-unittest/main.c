@@ -2736,6 +2736,6 @@ int main(void)
     TLOGI("SS-unittest: running all\n");
     run_all_tests(STORAGE_CLIENT_TD_PORT);
 //  run_all_tests(STORAGE_CLIENT_TDEA_PORT);
-//  run_all_tests(STORAGE_CLIENT_TP_PORT);
+    run_all_tests(STORAGE_CLIENT_TP_PORT);
     TLOGI("SS-unittest: complete!");}
 
