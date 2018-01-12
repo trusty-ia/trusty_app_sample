@@ -221,8 +221,6 @@ static void run_hwkey_tests(void)
 	generic_invalid_session();
 	generic_closed_session();
 
-	hwkey_derive_repeatable();
-	hwkey_derive_different();
 	hwkey_derive_zero_length();
 	hwkey_get_storage_auth();
 	hwkey_get_keybox();
