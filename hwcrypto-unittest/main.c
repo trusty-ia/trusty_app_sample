@@ -32,6 +32,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
+#include <uapi/err.h>
 #include <trusty_unittest.h>
 #include <lib/hwkey/hwkey.h>
 #include <lib/rng/trusty_rng.h>
