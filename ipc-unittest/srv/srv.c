@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#include <err.h>
-#include <list.h>
+#include <uapi/err.h>
+#include <lk/list.h>
 #include <assert.h>
 #include <stddef.h>
 #include <stdio.h>
