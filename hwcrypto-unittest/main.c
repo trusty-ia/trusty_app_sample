@@ -213,7 +213,7 @@ static void run_hwkey_tests(void)
 	TLOGI("WELCOME TO HWKEY UNITTEST!\n");
 	long rc = hwkey_open();
 	if (rc < 0) {
-		TLOGI("err (%d) opening hwkey session\n", rc);
+		TLOGI("err (%ld) opening hwkey session\n", rc);
 		return;
 	}
 
